@@ -131,6 +131,10 @@ func (p *OpenAIProvider) Generate(ctx context.Context, msgs []schema.Message, av
 	resultMsg := &schema.Message{
 		Role:    schema.RoleAssistant,
 		Content: choice.Content,
+		Usage: &schema.Usage{
+			PromptTokens:     resp.Usage.PromptTokens,
+			CompletionTokens: resp.Usage.CompletionTokens,
+		},
 	}
 
 	for _, tc := range choice.ToolCalls {

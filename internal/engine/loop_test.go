@@ -54,7 +54,7 @@ func (fakeTool) Execute(_ context.Context, _ json.RawMessage) (string, error) {
 func newTestAgent(t *testing.T, p *fakeProvider, reg tools.Registry, workDir string) *AgentEngine {
 	t.Helper()
 	composer := ctxpkg.NewPromptComposer(workDir, false)
-	return NewAgentEngine(p, reg, config.Settings{WorkDir: workDir}, NewNopReporter(), composer)
+	return NewAgentEngine(p, reg, config.Settings{WorkDir: workDir}, NewNopReporter(), composer, ctxpkg.NewRecoveryManager(), NewReminderInjector(3))
 }
 
 // ---- 无会话（回归） ----

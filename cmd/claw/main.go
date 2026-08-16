@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/aethelgards/tiny-claw/internal/approval"
 	"github.com/aethelgards/tiny-claw/internal/config"
 	ctxpkg "github.com/aethelgards/tiny-claw/internal/context"
 	"github.com/aethelgards/tiny-claw/internal/engine"
@@ -38,10 +39,12 @@ func main() {
 	//    这样 AI 在对话过程中才能调用它们操作工作区
 	reg := tools.NewToolRegistry()
 	for name, tool := range map[string]tools.BaseTool{
-		"read_file":  tools.NewReadFileTool(settings.WorkDir),
-		"write_file": tools.NewWriteFileTool(settings.WorkDir),
-		"edit_file":  tools.NewEditFileTool(settings.WorkDir),
-		"bash":       tools.NewBashTool(settings.WorkDir),
+		"read_file":      tools.NewReadFileTool(settings.WorkDir),
+		"write_file":     tools.NewWriteFileTool(settings.WorkDir),
+		"edit_file":      tools.NewEditFileTool(settings.WorkDir),
+		"delete_file":    tools.NewDeleteFileTool(settings.WorkDir),
+		"bash":           tools.NewBashTool(settings.WorkDir),
+		"spawn_subagent": engine.NewSubAgent(settings, p),
 	} {
 		if err := reg.Registry(tool); err != nil {
 			slog.Error("工具注册失败", "tool", name, "err", err)
@@ -55,17 +58,26 @@ func main() {
 
 	composer := ctxpkg.NewPromptComposer(settings.WorkDir, settings.PlanMode)
 
-	// 4. 创建 Agent 引擎，将 provider 与工具注册表绑定起来（CLI 模式用空实现 Reporter）
-	agent := engine.NewAgentEngine(p, reg, *settings, engine.NewTerminalReporter(), composer)
+	// 4. 审批：危险命令经终端交互审批（非交互 stdin 一律拒绝；非法超时回退默认 5m）
+	approvalMgr := approval.NewApprovalManager(approval.ParseApprovalTimeout(settings.ApprovalTimeout))
+	reg.Use(approval.ApprovalMiddleware(approvalMgr))
+	reporter := approval.NewTerminalReporter(approvalMgr)
 
-	// 5. 校验命令行参数：必须提供 prompt，用法为 `claw <prompt>`
+	// 5. 创建 Agent 引擎，将 provider 与工具注册表绑定起来（审批 reporter 转发 CLI 输出 + y/N 交互）
+	agent := engine.NewAgentEngine(p, reg, *settings, reporter, composer,
+		ctxpkg.NewRecoveryManager(),
+		engine.NewReminderInjector(3),
+	)
+
+	// 6. 校验命令行参数：必须提供 prompt，用法为 `claw <prompt>`
 	if len(os.Args) < 2 {
 		slog.Error("用法: claw <prompt>")
 		os.Exit(1)
 	}
 
-	// 6. 启动 Agent：把命令行参数作为用户输入交给 AI 循环处理，直到任务完成
-	if err := agent.Run(context.Background(), os.Args[1]); err != nil {
+	// 7. 启动 Agent：注入审批上下文（reporter + 本地审批者 "local"），交给 AI 循环处理
+	runCtx := approval.WithApprovalContext(context.Background(), reporter, "local")
+	if err := agent.Run(runCtx, os.Args[1]); err != nil {
 		slog.Error("运行失败", "err", err)
 		os.Exit(1)
 	}

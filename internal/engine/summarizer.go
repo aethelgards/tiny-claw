@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	context2 "github.com/aethelgards/tiny-claw/internal/context"
 	"github.com/aethelgards/tiny-claw/internal/provider"
 	"github.com/aethelgards/tiny-claw/internal/schema"
 )
@@ -15,7 +16,7 @@ const summarizeSystemPrompt = "你是对话历史摘要器。把提供的对话�
 // NewLLMSummarizer 构造基于 LLM 的会话摘要函数，供 WithSummarizer 注入。
 // 将旧摘要与即将被丢弃的原始消息整理为摘要提示词，调用 provider.Generate
 // 生成新摘要；失败时错误上抛，由 Session.compress 回退为纯截断。
-func NewLLMSummarizer(p provider.LLMProvider) Summarizer {
+func NewLLMSummarizer(p provider.LLMProvider) context2.Summarizer {
 	return func(ctx context.Context, existingSummary string, msgs []schema.Message) (string, error) {
 		promptMsgs := []schema.Message{
 			{Role: schema.RoleSystem, Content: summarizeSystemPrompt},

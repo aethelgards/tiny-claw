@@ -87,3 +87,27 @@ func (b *Bot) SendMessage(ctx context.Context, chatID, tenantKey, content string
 
 	return nil
 }
+
+// SendCardMessage 发送互动卡片消息（interactive）；cardJSON 为 card JSON v2 字符串。
+func (b *Bot) SendCardMessage(ctx context.Context, chatID, tenantKey, cardJSON string) error {
+	resp, err := b.cli.Im.Message.Create(
+		ctx,
+		larkim.NewCreateMessageReqBuilder().
+			ReceiveIdType("chat_id").
+			Body(larkim.NewCreateMessageReqBodyBuilder().
+				MsgType(larkim.MsgTypeInteractive).
+				ReceiveId(chatID).
+				Content(cardJSON).
+				Build()).
+			Build(),
+		larkcore.WithTenantKey(tenantKey),
+	)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	if !resp.Success() {
+		return errors.Errorf("send card message failed: code=%d msg=%s", resp.Code, resp.Msg)
+	}
+	slog.InfoContext(ctx, "card message sent", slog.String("chatID", chatID))
+	return nil
+}

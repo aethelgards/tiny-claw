@@ -1,6 +1,8 @@
-package tookit
+package helper
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -25,4 +27,12 @@ func AppendLine(path, line string) error {
 		return err
 	}
 	return nil
+}
+
+var hasher = md5.New()
+
+func GenerateFingerprint(toolName string, args []byte) string {
+	hasher.Write([]byte(toolName))
+	hasher.Write(args)
+	return hex.EncodeToString(hasher.Sum(nil))
 }

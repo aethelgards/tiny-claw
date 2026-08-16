@@ -130,6 +130,10 @@ func (p *ClaudeProvider) Generate(ctx context.Context, msgs []schema.Message, av
 	// 4. 反向解析
 	resultMsg := &schema.Message{
 		Role: schema.RoleAssistant,
+		Usage: &schema.Usage{
+			PromptTokens:     resp.Usage.InputTokens,
+			CompletionTokens: resp.Usage.OutputTokens,
+		},
 	}
 
 	for _, block := range resp.Content {

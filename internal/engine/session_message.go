@@ -6,19 +6,21 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+
+	"github.com/aethelgards/tiny-claw/internal/context"
 )
 
 // SessionMessage 按 sessionID 管理进程内的 Session 注册表，并发安全。
 // 会话由 Session 自身增量落盘（JSONL）；GetOrCreate 在内存未命中时经
 // LoadSession 从磁盘恢复，进程重启后多轮会话可续聊。
 type SessionMessage struct {
-	sessions map[string]*Session
+	sessions map[string]*context.Session
 	mu       sync.Mutex
 }
 
 // NewSessionMessage 创建一个空的会话管理器实例（测试或独立使用）。
 func NewSessionMessage() *SessionMessage {
-	return &SessionMessage{sessions: make(map[string]*Session)}
+	return &SessionMessage{sessions: make(map[string]*context.Session)}
 }
 
 // GlobalSessionMessage 进程级会话管理器单例。
@@ -26,18 +28,18 @@ var GlobalSessionMessage = NewSessionMessage()
 
 // GetOrCreate 返回已注册的会话；未注册时从磁盘加载（文件不存在则新建）并注册。
 // opts 透传给 LoadSession / NewSession，用于注入 WithSummarizer 等构造选项。
-func (sm *SessionMessage) GetOrCreate(sessionID string, workDir string, opts ...Option) *Session {
+func (sm *SessionMessage) GetOrCreate(sessionID string, workDir string, opts ...context.Option) *context.Session {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	if session, ok := sm.sessions[sessionID]; ok {
 		return session
 	}
-	session, err := LoadSession(sessionID, workDir, opts...)
+	session, err := context.LoadSession(sessionID, workDir, opts...)
 	if err != nil {
 		// 磁盘读取失败（非文件不存在）：降级为空会话，不阻塞会话获取
 		slog.Warn("session load failed, fallback to empty session",
 			slog.String("sessionID", sessionID), slog.String("err", err.Error()))
-		session = NewSession(sessionID, workDir, opts...)
+		session = context.NewSession(sessionID, workDir, opts...)
 	}
 	sm.sessions[sessionID] = session
 	return session
@@ -56,8 +58,8 @@ func (sm *SessionMessage) Delete(sessionID string) {
 	if !ok {
 		return
 	}
-	session.mu.Lock()
-	defer session.mu.Unlock()
+	session.Mu.Lock()
+	defer session.Mu.Unlock()
 	path := filepath.Join(session.WorkDir, "sessions", sessionID+".json")
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		slog.Warn("session delete: remove file failed",
@@ -88,16 +90,16 @@ func (sm *SessionMessage) Len() int {
 // 即使会话从未 Append（无增量文件），也会被写出为空会话文件。
 func (sm *SessionMessage) Flush() {
 	sm.mu.Lock()
-	sessions := make([]*Session, 0, len(sm.sessions))
+	sessions := make([]*context.Session, 0, len(sm.sessions))
 	for _, s := range sm.sessions {
 		sessions = append(sessions, s)
 	}
 	sm.mu.Unlock()
 
 	for _, s := range sessions {
-		s.mu.Lock()
-		err := s.rewriteFile()
-		s.mu.Unlock()
+		s.Mu.Lock()
+		err := s.RewriteFile()
+		s.Mu.Unlock()
 		if err != nil {
 			slog.Warn("session flush failed",
 				slog.String("sessionID", s.ID), slog.String("err", err.Error()))
@@ -109,6 +111,6 @@ func (sm *SessionMessage) Flush() {
 func (sm *SessionMessage) Close() {
 	sm.Flush()
 	sm.mu.Lock()
-	sm.sessions = make(map[string]*Session)
+	sm.sessions = make(map[string]*context.Session)
 	sm.mu.Unlock()
 }

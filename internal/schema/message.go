@@ -17,6 +17,7 @@ type Message struct {
 	ToolCalls []ToolCall `json:"tool_calls"`
 
 	ToolCallID string `json:"tool_call_id"`
+	Usage      *Usage `json:"usage"`
 }
 
 type ToolCall struct {
@@ -29,6 +30,12 @@ type ToolResult struct {
 	ToolCallID string `json:"tool_call_id"`
 	Output     string `json:"output"`
 	IsError    bool   `json:"is_error"`
+	Err        error  `json:"-"`
+}
+
+type Usage struct {
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
 }
 
 type ToolDefinition struct {

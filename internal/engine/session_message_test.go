@@ -8,13 +8,14 @@ import (
 	"sync"
 	"testing"
 
+	context2 "github.com/aethelgards/tiny-claw/internal/context"
 	"github.com/aethelgards/tiny-claw/internal/schema"
 )
 
 // ---- 测试辅助 ----
 
 // appendMsg 追加一条 User 消息并落盘，保证磁盘存在会话文件。
-func appendMsg(t *testing.T, s *Session, content string) {
+func appendMsg(t *testing.T, s *context2.Session, content string) {
 	t.Helper()
 	s.Append(context.Background(), schema.Message{Role: schema.RoleUser, Content: content})
 }
@@ -193,8 +194,8 @@ func TestGetOrCreateWiresSummarizer(t *testing.T) {
 	var gotOld string
 	var gotDropped []schema.Message
 	sess := sm.GetOrCreate("chat-1", workDir,
-		WithContextWindow(1000),
-		WithSummarizer(fakeSummarizer(t, &gotOld, &gotDropped, "sum", nil)),
+		context2.WithContextWindow(1000),
+		context2.WithSummarizer(fakeSummarizer(t, &gotOld, &gotDropped, "sum", nil)),
 	)
 
 	// 4 条 400 字符消息：estTokens = 4 × 204 = 816 > threshold(1000×80%=800)
@@ -223,7 +224,7 @@ func TestSessionMessageConcurrentGetOrCreate(t *testing.T) {
 
 	const n = 32
 	var wg sync.WaitGroup
-	instances := make([]*Session, n)
+	instances := make([]*context2.Session, n)
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(i int) {

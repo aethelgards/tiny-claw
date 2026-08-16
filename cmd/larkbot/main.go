@@ -7,11 +7,13 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/aethelgards/tiny-claw/internal/approval"
 	"github.com/aethelgards/tiny-claw/internal/config"
 	ctxpkg "github.com/aethelgards/tiny-claw/internal/context"
+	"github.com/aethelgards/tiny-claw/internal/engine"
 	"github.com/aethelgards/tiny-claw/internal/gateway/lark"
+	"github.com/aethelgards/tiny-claw/internal/helper"
 	"github.com/aethelgards/tiny-claw/internal/provider"
-	"github.com/aethelgards/tiny-claw/internal/tookit"
 	"github.com/aethelgards/tiny-claw/internal/tools"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -42,10 +44,12 @@ func main() {
 
 	reg := tools.NewToolRegistry()
 	for name, tool := range map[string]tools.BaseTool{
-		"read_file":  tools.NewReadFileTool(settings.WorkDir),
-		"write_file": tools.NewWriteFileTool(settings.WorkDir),
-		"edit_file":  tools.NewEditFileTool(settings.WorkDir),
-		"bash":       tools.NewBashTool(settings.WorkDir),
+		"read_file":      tools.NewReadFileTool(settings.WorkDir),
+		"write_file":     tools.NewWriteFileTool(settings.WorkDir),
+		"edit_file":      tools.NewEditFileTool(settings.WorkDir),
+		"delete_file":    tools.NewDeleteFileTool(settings.WorkDir),
+		"bash":           tools.NewBashTool(settings.WorkDir),
+		"spawn_subagent": engine.NewSubAgent(settings, p),
 	} {
 		if err := reg.Registry(tool); err != nil {
 			slog.Error("工具注册失败", "tool", name, "err", err)
@@ -56,6 +60,10 @@ func main() {
 	if err := ctxpkg.RegisterSkills(reg, settings.WorkDir); err != nil {
 		slog.Error("register skill failed", slog.String("err", err.Error()))
 	}
+
+	// 审批：创建审批管理器并接入注册表中间件（危险命令经卡片审批；非法超时回退默认 5m）
+	approvalMgr := approval.NewApprovalManager(approval.ParseApprovalTimeout(settings.ApprovalTimeout))
+	reg.Use(approval.ApprovalMiddleware(approvalMgr))
 
 	queue := lark.NewMessageQueue(settings.LarkChannelSize)
 	bot := lark.NewBot(settings.LarkAppID, settings.LarkAppSecret)
@@ -79,10 +87,10 @@ func main() {
 	go func() {
 		if err := bot.Start(ctx, func(d *dispatcher.EventDispatcher) {
 			d.OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
-				slog.InfoContext(ctx, "recv lark event", slog.String("event", tookit.Any2Json(event)))
+				slog.InfoContext(ctx, "recv lark event", slog.String("event", helper.Any2Json(event)))
 				msg, ok := lark.ParseMessageEvent(event)
 				if !ok {
-					slog.WarnContext(ctx, "parse lark event failed", slog.String("event", tookit.Any2Json(event)))
+					slog.WarnContext(ctx, "parse lark event failed", slog.String("event", helper.Any2Json(event)))
 					return nil
 				}
 				if !queue.Enqueue(msg) {
@@ -93,7 +101,7 @@ func main() {
 					slog.InfoContext(ctx, "message enqueue success", slog.String("msgID", msg.MessageID))
 				}
 				return nil
-			})
+			}).OnP2CardActionTrigger(lark.NewApprovalCardHandler(approvalMgr))
 		}); err != nil {
 			slog.Error("lark bot 启动失败", "err", err)
 			os.Exit(1)

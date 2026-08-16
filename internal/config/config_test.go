@@ -195,3 +195,42 @@ func TestLarkEnvInvalidChannelSizeIgnored(t *testing.T) {
 		t.Errorf("LarkChannelSize = %d, want 64 (invalid env ignored)", s.LarkChannelSize)
 	}
 }
+
+func TestDefaultApprovalTimeout(t *testing.T) {
+	if got := defaultSettings().ApprovalTimeout; got != "5m" {
+		t.Errorf("ApprovalTimeout = %q, want 5m", got)
+	}
+}
+
+func TestApplyLayerApprovalTimeout(t *testing.T) {
+	s := defaultSettings()
+	if err := applyLayer(&s, []byte(`{"approvalTimeout":"10m"}`)); err != nil {
+		t.Fatalf("applyLayer: %v", err)
+	}
+	if s.ApprovalTimeout != "10m" {
+		t.Errorf("ApprovalTimeout = %q, want 10m", s.ApprovalTimeout)
+	}
+}
+
+func TestApplyEnvApprovalTimeout(t *testing.T) {
+	t.Setenv("CLAW_APPROVAL_TIMEOUT", "2m")
+	s := defaultSettings()
+	applyEnv(&s)
+	if s.ApprovalTimeout != "2m" {
+		t.Errorf("ApprovalTimeout = %q, want 2m", s.ApprovalTimeout)
+	}
+}
+
+func TestLoadKeepsApprovalTimeout(t *testing.T) {
+	proj := t.TempDir()
+	mustWrite(t, filepath.Join(proj, ".claw", "settings.json"),
+		`{"approvalTimeout":"10m"}`)
+
+	s, err := loadFrom(filepath.Join(proj, "..", "nope.json"), proj)
+	if err != nil {
+		t.Fatalf("loadFrom: %v", err)
+	}
+	if s.ApprovalTimeout != "10m" {
+		t.Errorf("ApprovalTimeout = %q, want 10m", s.ApprovalTimeout)
+	}
+}

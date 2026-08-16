@@ -25,6 +25,7 @@ type Settings struct {
 	LarkAppID       string `json:"larkAppId"`
 	LarkAppSecret   string `json:"larkAppSecret"`
 	LarkChannelSize int    `json:"larkChannelSize"` // 消息队列容量，默认 64
+	ApprovalTimeout string `json:"approvalTimeout"` // 审批超时（Go duration 字符串），默认 "5m"，<=0 视为默认
 
 	Log *LogConfig `json:"log"`
 }
@@ -40,9 +41,11 @@ type LogConfig struct {
 func defaultSettings() Settings {
 	return Settings{
 		Provider:        "openai",
+		BaseURL:         "https://open.bigmodel.cn/api/paas/v4/",
 		MaxTokens:       4096,
 		WorkDir:         ".",
 		LarkChannelSize: 64,
+		ApprovalTimeout: "5m",
 		//Log: &LogConfig{
 		//	Level:     0,
 		//	Format:    "text",
@@ -107,6 +110,11 @@ func applyLayer(s *Settings, data []byte) error {
 	}
 	if v, ok := layer["larkChannelSize"]; ok {
 		if err := json.Unmarshal(v, &s.LarkChannelSize); err != nil {
+			return err
+		}
+	}
+	if v, ok := layer["approvalTimeout"]; ok {
+		if err := json.Unmarshal(v, &s.ApprovalTimeout); err != nil {
 			return err
 		}
 	}
@@ -181,6 +189,9 @@ func applyEnv(s *Settings) {
 		if n, err := strconv.Atoi(v); err == nil {
 			s.LarkChannelSize = n
 		}
+	}
+	if v := os.Getenv("CLAW_APPROVAL_TIMEOUT"); v != "" {
+		s.ApprovalTimeout = v
 	}
 }
 

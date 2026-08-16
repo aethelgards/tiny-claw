@@ -7,6 +7,7 @@ require (
 	github.com/larksuite/oapi-sdk-go/v3 v3.9.10
 	github.com/openai/openai-go/v3 v3.50.0
 	github.com/pkg/errors v0.9.1
+	github.com/samber/lo v1.53.0
 )
 
 require (
@@ -22,5 +23,6 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
-	golang.org/x/sync v0.16.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 )

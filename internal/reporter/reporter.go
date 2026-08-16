@@ -1,4 +1,4 @@
-package engine
+package reporter
 
 import "context"
 
@@ -10,4 +10,6 @@ type Reporter interface {
 	OnToolResult(ctx context.Context, toolName string, result string, isError bool)
 
 	OnMessage(ctx context.Context, content string)
+
+	SendApprovalMessage(ctx context.Context, taskID string, toolName string, args string) error
 }

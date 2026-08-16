@@ -6,7 +6,7 @@ import (
 	"log/slog"
 
 	ctxpkg "github.com/aethelgards/tiny-claw/internal/context"
-	"github.com/aethelgards/tiny-claw/internal/tookit"
+	"github.com/aethelgards/tiny-claw/internal/helper"
 )
 
 // Processor 消费端处理单元，由装配方注入（测试时可注入 fake）。
@@ -53,7 +53,7 @@ func (w *Worker) Run(ctx context.Context) {
 
 // safeProcess 包裹 processor.Process，捕获 panic 保证 worker 不因单个消息崩溃。
 func (w *Worker) safeProcess(ctx context.Context, msg IncomingMessage) {
-	slog.InfoContext(ctx, "worker processing message", slog.String("msg", tookit.Any2Json(msg)))
+	slog.InfoContext(ctx, "worker processing message", slog.String("msg", helper.Any2Json(msg)))
 	defer func() {
 		if r := recover(); r != nil {
 			err := fmt.Errorf("panic: %v", r)

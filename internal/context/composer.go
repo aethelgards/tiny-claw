@@ -57,6 +57,8 @@ var planMode = `
 - 绝对不允许“一口气写完所有代码最后再打勾”。做完一步，必须打勾一步！
 **[STEP 3: 迷失时的自救]**
 - 如果你在执行中遇到了报错，或者不知道下一步该干嘛了，立即使用 read_file 重新读取 ` + "`TODO.md`" + ` 确认自己的位置。
+**[STEP 4: 及时清理完成的TODO和PLAN]**
+- 如果所有的TODO都已完成，那么需要将当前的TODO.md和PLAN.md进行删除，避免下次执行时重复读取已经完成的任务。
 `
 
 func (c *PromptComposer) Build() schema.Message {

@@ -9,8 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	context2 "github.com/aethelgards/tiny-claw/internal/context"
+	"github.com/aethelgards/tiny-claw/internal/helper"
 	"github.com/aethelgards/tiny-claw/internal/schema"
-	"github.com/aethelgards/tiny-claw/internal/tookit"
 )
 
 // ---- 测试辅助 ----
@@ -37,7 +38,7 @@ func toolCallMsg(name string, argsN int) schema.Message {
 }
 
 // fakeSummarizer 记录入参并返回固定结果。
-func fakeSummarizer(t *testing.T, gotOld *string, gotDropped *[]schema.Message, result string, err error) Summarizer {
+func fakeSummarizer(t *testing.T, gotOld *string, gotDropped *[]schema.Message, result string, err error) context2.Summarizer {
 	t.Helper()
 	return func(_ context.Context, old string, msgs []schema.Message) (string, error) {
 		*gotOld = old
@@ -67,22 +68,22 @@ func assertNoConsecutiveUsers(t *testing.T, msgs []schema.Message) {
 // ---- 阈值计算 ----
 
 func TestThresholdComputation(t *testing.T) {
-	s := NewSession("t1", t.TempDir(), WithContextWindow(1000), WithCompressRatio(80))
+	s := context2.NewSession("t1", t.TempDir(), context2.WithContextWindow(1000), context2.WithCompressRatio(80))
 	if got := s.threshold(); got != 800 {
 		t.Fatalf("threshold = %d, want 800", got)
 	}
 	// ratio 越界钳制：<1 → 1
-	s2 := NewSession("t2", t.TempDir(), WithContextWindow(1000), WithCompressRatio(0))
+	s2 := context2.NewSession("t2", t.TempDir(), context2.WithContextWindow(1000), context2.WithCompressRatio(0))
 	if got := s2.threshold(); got != 10 {
 		t.Fatalf("threshold(clamp low) = %d, want 10", got)
 	}
 	// ratio 越界钳制：>100 → 100
-	s3 := NewSession("t3", t.TempDir(), WithContextWindow(1000), WithCompressRatio(150))
+	s3 := context2.NewSession("t3", t.TempDir(), context2.WithContextWindow(1000), context2.WithCompressRatio(150))
 	if got := s3.threshold(); got != 1000 {
 		t.Fatalf("threshold(clamp high) = %d, want 1000", got)
 	}
 	// 默认值：128k × 80%
-	s4 := NewSession("t4", t.TempDir())
+	s4 := context2.NewSession("t4", t.TempDir())
 	if got := s4.threshold(); got != 128_000*80/100 {
 		t.Fatalf("threshold(default) = %d, want %d", got, 128_000*80/100)
 	}
@@ -102,7 +103,7 @@ func TestLookupContextWindow(t *testing.T) {
 		{"unknown-model-x", 128_000},
 	}
 	for _, c := range cases {
-		if got := LookupContextWindow(c.model); got != c.want {
+		if got := context2.LookupContextWindow(c.model); got != c.want {
 			t.Errorf("LookupContextWindow(%q) = %d, want %d", c.model, got, c.want)
 		}
 	}
@@ -110,16 +111,16 @@ func TestLookupContextWindow(t *testing.T) {
 
 func TestWindowPriority(t *testing.T) {
 	// 显式 WithContextWindow 优先于 WithModel，与选项顺序无关
-	s := NewSession("p1", t.TempDir(), WithModel("claude-sonnet-4-5"), WithContextWindow(5000))
+	s := context2.NewSession("p1", t.TempDir(), context2.WithModel("claude-sonnet-4-5"), context2.WithContextWindow(5000))
 	if got := s.threshold(); got != 5000*80/100 {
 		t.Fatalf("explicit window overridden by model: threshold=%d, want %d", got, 5000*80/100)
 	}
-	s2 := NewSession("p2", t.TempDir(), WithContextWindow(5000), WithModel("claude-sonnet-4-5"))
+	s2 := context2.NewSession("p2", t.TempDir(), context2.WithContextWindow(5000), context2.WithModel("claude-sonnet-4-5"))
 	if got := s2.threshold(); got != 5000*80/100 {
 		t.Fatalf("explicit window overridden by model (reversed): threshold=%d, want %d", got, 5000*80/100)
 	}
 	// 仅 WithModel：查表
-	s3 := NewSession("p3", t.TempDir(), WithModel("claude-sonnet-4-5"))
+	s3 := context2.NewSession("p3", t.TempDir(), context2.WithModel("claude-sonnet-4-5"))
 	if got := s3.threshold(); got != 200_000*80/100 {
 		t.Fatalf("model lookup window wrong: threshold=%d, want %d", got, 200_000*80/100)
 	}
@@ -131,8 +132,8 @@ func TestWindowPriority(t *testing.T) {
 func TestNoCompressUnderThreshold(t *testing.T) {
 	var old string
 	var dropped []schema.Message
-	s := NewSession("nc", t.TempDir(), WithContextWindow(2000), // threshold=1600
-		WithSummarizer(fakeSummarizer(t, &old, &dropped, "s", nil)))
+	s := context2.NewSession("nc", t.TempDir(), context2.WithContextWindow(2000), // threshold=1600
+		context2.WithSummarizer(fakeSummarizer(t, &old, &dropped, "s", nil)))
 
 	ctx := context.Background()
 	for i := 0; i < 7; i++ { // 7 × 204 = 1428 ≤ 1600
@@ -150,8 +151,8 @@ func TestNoCompressUnderThreshold(t *testing.T) {
 func TestCompressTriggersOnAppend(t *testing.T) {
 	var old string
 	var dropped []schema.Message
-	s := NewSession("ct", t.TempDir(), WithContextWindow(2000), // threshold=1600, budget=1400
-		WithSummarizer(fakeSummarizer(t, &old, &dropped, "s1", nil)))
+	s := context2.NewSession("ct", t.TempDir(), context2.WithContextWindow(2000), // threshold=1600, budget=1400
+		context2.WithSummarizer(fakeSummarizer(t, &old, &dropped, "s1", nil)))
 
 	ctx := context.Background()
 	for i := 0; i < 7; i++ {
@@ -181,8 +182,8 @@ func TestCompressRatioTriggerPoints(t *testing.T) {
 	triggerAt := func(ratio int) int {
 		var old string
 		var dropped []schema.Message
-		s := NewSession(t.Name(), t.TempDir(), WithContextWindow(2000), WithCompressRatio(ratio),
-			WithSummarizer(fakeSummarizer(t, &old, &dropped, "s", nil)))
+		s := context2.NewSession(t.Name(), t.TempDir(), context2.WithContextWindow(2000), context2.WithCompressRatio(ratio),
+			context2.WithSummarizer(fakeSummarizer(t, &old, &dropped, "s", nil)))
 		for i := 1; ; i++ {
 			s.Append(ctx, msg)
 			if s.summary != "" {
@@ -205,8 +206,8 @@ func TestCompressRatioTriggerPoints(t *testing.T) {
 func TestToolPairBoundaryIntact(t *testing.T) {
 	// 工具对被整体丢弃的场景：budget 落在结果处 → 修正后从下一 assistant 开始
 	var dropped []schema.Message
-	s := NewSession("tp", t.TempDir(), WithContextWindow(2000), WithCompressRatio(30), // threshold=600, budget=525
-		WithSummarizer(fakeSummarizer(t, new(string), &dropped, "s1", nil)))
+	s := context2.NewSession("tp", t.TempDir(), context2.WithContextWindow(2000), context2.WithCompressRatio(30), // threshold=600, budget=525
+		context2.WithSummarizer(fakeSummarizer(t, new(string), &dropped, "s1", nil)))
 
 	ctx := context.Background()
 	m0 := contentMsg(schema.RoleUser, 700)     // est 354
@@ -227,8 +228,8 @@ func TestToolPairBoundaryIntact(t *testing.T) {
 // 压缩后输出序列无连续 User（摘要前置 + 交替性）。
 func TestAlternationAndSummaryPlacement(t *testing.T) {
 	var dropped []schema.Message
-	s := NewSession("alt", t.TempDir(), WithContextWindow(1000), WithCompressRatio(80), // threshold=800, budget=700
-		WithSummarizer(fakeSummarizer(t, new(string), &dropped, "sum", nil)))
+	s := context2.NewSession("alt", t.TempDir(), context2.WithContextWindow(1000), context2.WithCompressRatio(80), // threshold=800, budget=700
+		context2.WithSummarizer(fakeSummarizer(t, new(string), &dropped, "sum", nil)))
 
 	ctx := context.Background()
 	s.Append(ctx,
@@ -259,8 +260,8 @@ func TestAlternationAndSummaryPlacement(t *testing.T) {
 
 // history 以 User 开头（压缩发生在用户追问后）时摘要前置合并进第一条 User。
 func TestSummaryMergedIntoLeadingUser(t *testing.T) {
-	s := NewSession("mrg", t.TempDir(), WithContextWindow(1000), // threshold=800, budget=700
-		WithSummarizer(fakeSummarizer(t, new(string), new([]schema.Message), "sum", nil)))
+	s := context2.NewSession("mrg", t.TempDir(), context2.WithContextWindow(1000), // threshold=800, budget=700
+		context2.WithSummarizer(fakeSummarizer(t, new(string), new([]schema.Message), "sum", nil)))
 
 	ctx := context.Background()
 	// [assistant(800) → user(800)]：total 808 > 800 触发压缩，后缀仅剩最后的用户追问
@@ -286,8 +287,8 @@ func TestSummaryMergedIntoLeadingUser(t *testing.T) {
 
 // summarizer 返回错误 → 回退纯截断（summary 置空、历史仍被裁剪）。
 func TestSummarizerErrorFallback(t *testing.T) {
-	s := NewSession("ef", t.TempDir(), WithContextWindow(2000),
-		WithSummarizer(fakeSummarizer(t, new(string), new([]schema.Message), "", errors.New("boom"))))
+	s := context2.NewSession("ef", t.TempDir(), context2.WithContextWindow(2000),
+		context2.WithSummarizer(fakeSummarizer(t, new(string), new([]schema.Message), "", errors.New("boom"))))
 
 	ctx := context.Background()
 	for i := 0; i < 8; i++ {
@@ -303,7 +304,7 @@ func TestSummarizerErrorFallback(t *testing.T) {
 
 // 未注入 summarizer → 纯截断，不 panic。
 func TestNoSummarizerTruncation(t *testing.T) {
-	s := NewSession("ns", t.TempDir(), WithContextWindow(2000))
+	s := context2.NewSession("ns", t.TempDir(), context2.WithContextWindow(2000))
 
 	ctx := context.Background()
 	for i := 0; i < 8; i++ {
@@ -320,8 +321,8 @@ func TestNoSummarizerTruncation(t *testing.T) {
 // 单回合超预算（最后一条消息放不进预算）：不压缩、不 panic、summarizer 不被调用。
 func TestSingleTurnOverBudgetAbort(t *testing.T) {
 	called := false
-	s := NewSession("sb", t.TempDir(), WithContextWindow(2000), WithCompressRatio(20), // threshold=400, budget=350
-		WithSummarizer(func(_ context.Context, _ string, _ []schema.Message) (string, error) {
+	s := context2.NewSession("sb", t.TempDir(), context2.WithContextWindow(2000), context2.WithCompressRatio(20), // threshold=400, budget=350
+		context2.WithSummarizer(func(_ context.Context, _ string, _ []schema.Message) (string, error) {
 			called = true
 			return "s", nil
 		}))
@@ -339,8 +340,8 @@ func TestSingleTurnOverBudgetAbort(t *testing.T) {
 // 边界修正会清空后缀（当前回合工具结果未回复）：放弃压缩，不产生孤儿工具结果。
 func TestBoundaryFixWouldDropCurrentTurnAbort(t *testing.T) {
 	called := false
-	s := NewSession("bf", t.TempDir(), WithContextWindow(2000), WithCompressRatio(30), // threshold=600, budget=525
-		WithSummarizer(func(_ context.Context, _ string, _ []schema.Message) (string, error) {
+	s := context2.NewSession("bf", t.TempDir(), context2.WithContextWindow(2000), context2.WithCompressRatio(30), // threshold=600, budget=525
+		context2.WithSummarizer(func(_ context.Context, _ string, _ []schema.Message) (string, error) {
 			called = true
 			return "s", nil
 		}))
@@ -361,7 +362,7 @@ func TestBoundaryFixWouldDropCurrentTurnAbort(t *testing.T) {
 
 // 摘要存在但 history 为空：GetWorkingMemory 仅返回摘要消息。
 func TestWorkingMemorySummaryOnly(t *testing.T) {
-	s := NewSession("so", t.TempDir())
+	s := context2.NewSession("so", t.TempDir())
 	s.summary = "direct"
 	out := s.GetWorkingMemory(context.Background())
 	if len(out) != 1 || out[0].Role != schema.RoleUser || !strings.HasPrefix(out[0].Content, "【历史会话摘要】") {
@@ -375,8 +376,8 @@ func TestWorkingMemorySummaryOnly(t *testing.T) {
 func TestPersistenceRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	var dropped []schema.Message
-	s := NewSession("sess-1", dir, WithContextWindow(2000),
-		WithSummarizer(fakeSummarizer(t, new(string), &dropped, "s1", nil)))
+	s := context2.NewSession("sess-1", dir, context2.WithContextWindow(2000),
+		context2.WithSummarizer(fakeSummarizer(t, new(string), &dropped, "s1", nil)))
 
 	ctx := context.Background()
 	for i := 0; i < 7; i++ {
@@ -410,7 +411,7 @@ func TestPersistenceRoundTrip(t *testing.T) {
 		t.Fatalf("first line after compress not summary record: %s", lines[0])
 	}
 
-	loaded, err := LoadSession("sess-1", dir, WithContextWindow(2000))
+	loaded, err := context2.LoadSession("sess-1", dir, context2.WithContextWindow(2000))
 	if err != nil {
 		t.Fatalf("LoadSession: %v", err)
 	}
@@ -422,7 +423,7 @@ func TestPersistenceRoundTrip(t *testing.T) {
 	}
 
 	// 缺失文件 → 空会话，不报错
-	ghost, err := LoadSession("ghost", dir)
+	ghost, err := context2.LoadSession("ghost", dir)
 	if err != nil || len(ghost.history) != 0 || ghost.summary != "" {
 		t.Fatalf("LoadSession(missing) = %+v, %v; want empty session", ghost, err)
 	}
@@ -436,14 +437,14 @@ func TestLoadSessionSkipsInvalidLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := "not json at all\n" +
-		tookit.Any2Json(map[string]string{"summary": "s9"}) + "\n" +
-		tookit.Any2Json(schema.Message{Role: schema.RoleUser, Content: "hi"}) + "\n" +
-		tookit.Any2Json(schema.Message{Role: schema.RoleSystem, Content: "sys"}) + "\n"
+		helper.Any2Json(map[string]string{"summary": "s9"}) + "\n" +
+		helper.Any2Json(schema.Message{Role: schema.RoleUser, Content: "hi"}) + "\n" +
+		helper.Any2Json(schema.Message{Role: schema.RoleSystem, Content: "sys"}) + "\n"
 	if err := os.WriteFile(file, []byte(raw), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	loaded, err := LoadSession("dirty", dir)
+	loaded, err := context2.LoadSession("dirty", dir)
 	if err != nil {
 		t.Fatalf("LoadSession: %v", err)
 	}
@@ -459,7 +460,7 @@ func TestLoadSessionReadError(t *testing.T) {
 	if err := os.MkdirAll(bad, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadSession("sess", dir); err == nil {
+	if _, err := context2.LoadSession("sess", dir); err == nil {
 		t.Fatal("LoadSession should fail when session path is a directory")
 	}
 }
@@ -473,8 +474,8 @@ func TestDiskErrorsNoPanic(t *testing.T) {
 	}
 
 	var dropped []schema.Message
-	s := NewSession("disk", blocked, WithContextWindow(2000),
-		WithSummarizer(fakeSummarizer(t, new(string), &dropped, "s1", nil)))
+	s := context2.NewSession("disk", blocked, context2.WithContextWindow(2000),
+		context2.WithSummarizer(fakeSummarizer(t, new(string), &dropped, "s1", nil)))
 
 	ctx := context.Background()
 	for i := 0; i < 8; i++ {
@@ -495,7 +496,7 @@ func TestDiskErrorsNoPanic(t *testing.T) {
 // system 提示词误入 Append → 丢弃 + 告警：不进 history、不落盘。
 func TestAppendDropsSystemMessage(t *testing.T) {
 	dir := t.TempDir()
-	s := NewSession("sys", dir, WithContextWindow(2000))
+	s := context2.NewSession("sys", dir, context2.WithContextWindow(2000))
 
 	ctx := context.Background()
 	s.Append(ctx,
@@ -522,7 +523,7 @@ func TestAppendDropsSystemMessage(t *testing.T) {
 	}
 
 	// 全部为 system → 直接返回，不建文件、不 panic
-	s2 := NewSession("sys2", dir, WithContextWindow(2000))
+	s2 := context2.NewSession("sys2", dir, context2.WithContextWindow(2000))
 	s2.Append(ctx, contentMsg(schema.RoleSystem, 500))
 	if len(s2.history) != 0 {
 		t.Fatalf("all-system append left history len = %d, want 0", len(s2.history))

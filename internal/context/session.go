@@ -1,4 +1,4 @@
-package engine
+package context
 
 import (
 	"context"
@@ -11,8 +11,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/aethelgards/tiny-claw/internal/helper"
 	"github.com/aethelgards/tiny-claw/internal/schema"
-	"github.com/aethelgards/tiny-claw/internal/tookit"
 )
 
 const (
@@ -50,7 +50,11 @@ type Session struct {
 
 	summarizer Summarizer // 摘要生成函数，nil 时压缩退化为纯截断
 
-	mu sync.Mutex
+	TotalCompletionTokens int64
+	TotalPromptTokens     int64
+	TotalCostCNY          float64
+
+	Mu sync.Mutex
 }
 
 func NewSession(sessionID, workDir string, opts ...Option) *Session {
@@ -67,6 +71,14 @@ func NewSession(sessionID, workDir string, opts ...Option) *Session {
 		opt(s)
 	}
 	return s
+}
+
+func (s *Session) RecordUsage(prompt int64, completion int64, cost float64) {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+	s.TotalPromptTokens += prompt
+	s.TotalCostCNY += cost
+	s.TotalCompletionTokens += completion
 }
 
 // LoadSession 从磁盘加载既有会话；文件不存在时返回空会话。
@@ -174,11 +186,11 @@ func (s *Session) Append(ctx context.Context, msgs ...schema.Message) {
 	if len(msgs) == 0 {
 		return
 	}
-	s.mu.Lock()
+	s.Mu.Lock()
 	s.history = append(s.history, msgs...)
 	s.UpdatedAt = time.Now()
 	s.saveToDisk(ctx, msgs)
-	s.mu.Unlock()
+	s.Mu.Unlock()
 
 	if s.totalTokens() > s.threshold() {
 		s.compress(ctx)
@@ -214,8 +226,8 @@ func (s *Session) dropSystem(ctx context.Context, msgs []schema.Message) []schem
 // 保证输出序列不出现两个连续 User。
 func (s *Session) GetWorkingMemory(ctx context.Context) []schema.Message {
 	_ = ctx
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 
 	out := cloneMsgs(s.history)
 	if s.summary == "" {
@@ -234,8 +246,8 @@ func (s *Session) GetWorkingMemory(ctx context.Context) []schema.Message {
 
 // totalTokens 估算整个历史的 token 数。
 func (s *Session) totalTokens() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	n := 0
 	for _, m := range s.history {
 		n += estTokens(m)
@@ -261,8 +273,8 @@ func estTokens(msg schema.Message) int {
 // compress 把最旧的超窗前缀压缩为摘要，保留最近原始消息。
 // 触发条件由调用方保证（totalTokens > threshold）。
 func (s *Session) compress(ctx context.Context) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 
 	// 摘要预留 threshold/8，其余留给最近原始消息
 	budget := s.threshold() - s.threshold()/8
@@ -315,32 +327,32 @@ func (s *Session) compress(ctx context.Context) {
 		s.summary = ""
 	}
 
-	if err := s.rewriteFile(); err != nil {
+	if err := s.RewriteFile(); err != nil {
 		slog.WarnContext(ctx, "session rewrite failed", slog.String("err", err.Error()))
 	}
 }
 
 // saveToDisk 以 JSONL 追加方式增量落盘。
 func (s *Session) saveToDisk(ctx context.Context, msgs []schema.Message) {
-	sessionFile := filepath.Join(s.WorkDir, "sessions", s.ID+".json")
+	sessionFile := filepath.Join(s.WorkDir, ".claw", "sessions", s.ID+".json")
 	for _, msg := range msgs {
-		line := tookit.Any2Json(msg)
-		if err := tookit.AppendLine(sessionFile, line); err != nil {
+		line := helper.Any2Json(msg)
+		if err := helper.AppendLine(sessionFile, line); err != nil {
 			slog.WarnContext(ctx, "save to disk failed", slog.String("err", err.Error()))
 		}
 	}
 }
 
-// rewriteFile 原子重写整个会话文件：摘要记录 + 原始消息。
-func (s *Session) rewriteFile() error {
+// RewriteFile 原子重写整个会话文件：摘要记录 + 原始消息。
+func (s *Session) RewriteFile() error {
 	file := filepath.Join(s.WorkDir, "sessions", s.ID+".json")
 	var sb strings.Builder
 	if s.summary != "" {
-		sb.WriteString(tookit.Any2Json(map[string]string{"summary": s.summary}))
+		sb.WriteString(helper.Any2Json(map[string]string{"summary": s.summary}))
 		sb.WriteByte('\n')
 	}
 	for _, msg := range s.history {
-		sb.WriteString(tookit.Any2Json(msg))
+		sb.WriteString(helper.Any2Json(msg))
 		sb.WriteByte('\n')
 	}
 	tmp := file + ".tmp"

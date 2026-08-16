@@ -3,6 +3,7 @@ package lark
 import (
 	"context"
 
+	"github.com/aethelgards/tiny-claw/internal/approval"
 	"github.com/aethelgards/tiny-claw/internal/config"
 	ctxpkg "github.com/aethelgards/tiny-claw/internal/context"
 	"github.com/aethelgards/tiny-claw/internal/engine"
@@ -19,7 +20,7 @@ type EngineProcessor struct {
 	settings       config.Settings
 	bot            *Bot
 	promptComposer *ctxpkg.PromptComposer
-	summarizer     engine.Summarizer
+	summarizer     ctxpkg.Summarizer
 }
 
 func NewEngineProcessor(p provider.LLMProvider, r tools.Registry, s config.Settings, b *Bot, composer *ctxpkg.PromptComposer) *EngineProcessor {
@@ -36,7 +37,9 @@ func NewEngineProcessor(p provider.LLMProvider, r tools.Registry, s config.Setti
 // Process 为该消息创建独立 engine + reporter，绑定按 ChatID 复用/新建的会话后执行。
 func (p *EngineProcessor) Process(ctx context.Context, msg IncomingMessage) error {
 	reporter := NewLarkReporter(p.bot, msg.ChatID, msg.TenantKey)
-	agent := engine.NewAgentEngine(p.provider, p.registry, p.settings, reporter, p.promptComposer)
-	agent.WithSession(engine.GlobalSessionMessage.GetOrCreate(msg.ChatID, p.settings.WorkDir, engine.WithSummarizer(p.summarizer)))
+	// 注入审批上下文：审批中间件通过 ctx 取 reporter（发卡片）与发起人 open_id（身份校验）
+	ctx = approval.WithApprovalContext(ctx, reporter, msg.OpenID)
+	agent := engine.NewAgentEngine(p.provider, p.registry, p.settings, reporter, p.promptComposer, ctxpkg.NewRecoveryManager(), engine.NewReminderInjector(3))
+	agent.WithSession(engine.GlobalSessionMessage.GetOrCreate(msg.ChatID, p.settings.WorkDir, ctxpkg.WithSummarizer(p.summarizer)))
 	return agent.Run(ctx, msg.Text)
 }
