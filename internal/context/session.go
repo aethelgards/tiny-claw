@@ -84,7 +84,7 @@ func (s *Session) RecordUsage(prompt int64, completion int64, cost float64) {
 // LoadSession 从磁盘加载既有会话；文件不存在时返回空会话。
 func LoadSession(sessionID, workDir string, opts ...Option) (*Session, error) {
 	s := NewSession(sessionID, workDir, opts...)
-	data, err := os.ReadFile(filepath.Join(workDir, "sessions", sessionID+".json"))
+	data, err := os.ReadFile(filepath.Join(workDir, ".claw", "sessions", sessionID+".json"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return s, nil
@@ -260,6 +260,21 @@ func (s *Session) threshold() int {
 	return s.contextWindow * s.compressRatio / 100
 }
 
+// Threshold 返回触发压缩的阈值（contextWindow × compressRatio / 100）。
+func (s *Session) Threshold() int { return s.threshold() }
+
+// Summary 返回当前压缩摘要。
+func (s *Session) Summary() string { return s.summary }
+
+// SetSummary 设置压缩摘要（供测试使用）。
+func (s *Session) SetSummary(v string) { s.summary = v }
+
+// History 返回当前会话历史的副本。
+func (s *Session) History() []schema.Message { return cloneMsgs(s.history) }
+
+// TotalTokens 估算整个历史的 token 数（导出供测试使用）。
+func (s *Session) TotalTokens() int { return s.totalTokens() }
+
 // estTokens 单条消息的保守 token 估算：固定开销 + 字符数/2。
 func estTokens(msg schema.Message) int {
 	n := 4
@@ -345,7 +360,7 @@ func (s *Session) saveToDisk(ctx context.Context, msgs []schema.Message) {
 
 // RewriteFile 原子重写整个会话文件：摘要记录 + 原始消息。
 func (s *Session) RewriteFile() error {
-	file := filepath.Join(s.WorkDir, "sessions", s.ID+".json")
+	file := filepath.Join(s.WorkDir, ".claw", "sessions", s.ID+".json")
 	var sb strings.Builder
 	if s.summary != "" {
 		sb.WriteString(helper.Any2Json(map[string]string{"summary": s.summary}))

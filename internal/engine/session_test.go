@@ -17,7 +17,7 @@ import (
 // ---- 测试辅助 ----
 
 // contentMsg 构造 Content 为 n 个 'a' 的消息，estTokens = 4 + n/2。
-func contentMsg(role schema.Rule, n int) schema.Message {
+func contentMsg(role schema.Role, n int) schema.Message {
 	return schema.Message{Role: role, Content: strings.Repeat("a", n)}
 }
 
@@ -69,22 +69,22 @@ func assertNoConsecutiveUsers(t *testing.T, msgs []schema.Message) {
 
 func TestThresholdComputation(t *testing.T) {
 	s := context2.NewSession("t1", t.TempDir(), context2.WithContextWindow(1000), context2.WithCompressRatio(80))
-	if got := s.threshold(); got != 800 {
+	if got := s.Threshold(); got != 800 {
 		t.Fatalf("threshold = %d, want 800", got)
 	}
 	// ratio 越界钳制：<1 → 1
 	s2 := context2.NewSession("t2", t.TempDir(), context2.WithContextWindow(1000), context2.WithCompressRatio(0))
-	if got := s2.threshold(); got != 10 {
+	if got := s2.Threshold(); got != 10 {
 		t.Fatalf("threshold(clamp low) = %d, want 10", got)
 	}
 	// ratio 越界钳制：>100 → 100
 	s3 := context2.NewSession("t3", t.TempDir(), context2.WithContextWindow(1000), context2.WithCompressRatio(150))
-	if got := s3.threshold(); got != 1000 {
+	if got := s3.Threshold(); got != 1000 {
 		t.Fatalf("threshold(clamp high) = %d, want 1000", got)
 	}
 	// 默认值：128k × 80%
 	s4 := context2.NewSession("t4", t.TempDir())
-	if got := s4.threshold(); got != 128_000*80/100 {
+	if got := s4.Threshold(); got != 128_000*80/100 {
 		t.Fatalf("threshold(default) = %d, want %d", got, 128_000*80/100)
 	}
 }
@@ -112,16 +112,16 @@ func TestLookupContextWindow(t *testing.T) {
 func TestWindowPriority(t *testing.T) {
 	// 显式 WithContextWindow 优先于 WithModel，与选项顺序无关
 	s := context2.NewSession("p1", t.TempDir(), context2.WithModel("claude-sonnet-4-5"), context2.WithContextWindow(5000))
-	if got := s.threshold(); got != 5000*80/100 {
+	if got := s.Threshold(); got != 5000*80/100 {
 		t.Fatalf("explicit window overridden by model: threshold=%d, want %d", got, 5000*80/100)
 	}
 	s2 := context2.NewSession("p2", t.TempDir(), context2.WithContextWindow(5000), context2.WithModel("claude-sonnet-4-5"))
-	if got := s2.threshold(); got != 5000*80/100 {
+	if got := s2.Threshold(); got != 5000*80/100 {
 		t.Fatalf("explicit window overridden by model (reversed): threshold=%d, want %d", got, 5000*80/100)
 	}
 	// 仅 WithModel：查表
 	s3 := context2.NewSession("p3", t.TempDir(), context2.WithModel("claude-sonnet-4-5"))
-	if got := s3.threshold(); got != 200_000*80/100 {
+	if got := s3.Threshold(); got != 200_000*80/100 {
 		t.Fatalf("model lookup window wrong: threshold=%d, want %d", got, 200_000*80/100)
 	}
 }
@@ -139,11 +139,11 @@ func TestNoCompressUnderThreshold(t *testing.T) {
 	for i := 0; i < 7; i++ { // 7 × 204 = 1428 ≤ 1600
 		s.Append(ctx, contentMsg(schema.RoleUser, 400))
 	}
-	if old != "" || dropped != nil || s.summary != "" {
+	if old != "" || dropped != nil || s.Summary() != "" {
 		t.Fatalf("compression triggered under threshold: old=%q dropped=%v", old, dropped)
 	}
-	if len(s.history) != 7 {
-		t.Fatalf("history len = %d, want 7", len(s.history))
+	if len(s.History()) != 7 {
+		t.Fatalf("history len = %d, want 7", len(s.History()))
 	}
 }
 
@@ -163,13 +163,13 @@ func TestCompressTriggersOnAppend(t *testing.T) {
 	if len(dropped) != 2 {
 		t.Fatalf("dropped msgs = %d, want 2", len(dropped))
 	}
-	if s.summary != "s1" {
-		t.Fatalf("summary = %q, want s1", s.summary)
+	if s.Summary() != "s1" {
+		t.Fatalf("summary = %q, want s1", s.Summary())
 	}
-	if len(s.history) != 6 {
-		t.Fatalf("history len = %d, want 6", len(s.history))
+	if len(s.History()) != 6 {
+		t.Fatalf("history len = %d, want 6", len(s.History()))
 	}
-	if got := s.totalTokens(); got > 1400 {
+	if got := s.TotalTokens(); got > 1400 {
 		t.Fatalf("total tokens after compress = %d, exceeds budget 1400", got)
 	}
 }
@@ -186,7 +186,7 @@ func TestCompressRatioTriggerPoints(t *testing.T) {
 			context2.WithSummarizer(fakeSummarizer(t, &old, &dropped, "s", nil)))
 		for i := 1; ; i++ {
 			s.Append(ctx, msg)
-			if s.summary != "" {
+			if s.Summary() != "" {
 				return i
 			}
 		}
@@ -217,8 +217,8 @@ func TestToolPairBoundaryIntact(t *testing.T) {
 	s.Append(ctx, m0, m1, m2, m3)              // total 992 > 600
 
 	// cutoff 自然落在 m2(工具结果) → 边界修正前移到 m3(assistant)
-	if len(s.history) != 1 || s.history[0].Role != schema.RoleAssistant {
-		t.Fatalf("history after compress = %+v, want [assistant]", s.history)
+	if len(s.History()) != 1 || s.History()[0].Role != schema.RoleAssistant {
+		t.Fatalf("history after compress = %+v, want [assistant]", s.History())
 	}
 	if len(dropped) != 3 {
 		t.Fatalf("dropped = %d msgs, want 3 (pair must drop together)", len(dropped))
@@ -294,11 +294,11 @@ func TestSummarizerErrorFallback(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		s.Append(ctx, contentMsg(schema.RoleUser, 400))
 	}
-	if s.summary != "" {
-		t.Fatalf("summary = %q, want empty on error", s.summary)
+	if s.Summary() != "" {
+		t.Fatalf("summary = %q, want empty on error", s.Summary())
 	}
-	if len(s.history) != 6 {
-		t.Fatalf("history len = %d, want 6 (truncation still applied)", len(s.history))
+	if len(s.History()) != 6 {
+		t.Fatalf("history len = %d, want 6 (truncation still applied)", len(s.History()))
 	}
 }
 
@@ -310,11 +310,11 @@ func TestNoSummarizerTruncation(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		s.Append(ctx, contentMsg(schema.RoleUser, 400))
 	}
-	if s.summary != "" {
-		t.Fatalf("summary = %q, want empty", s.summary)
+	if s.Summary() != "" {
+		t.Fatalf("summary = %q, want empty", s.Summary())
 	}
-	if len(s.history) != 6 {
-		t.Fatalf("history len = %d, want 6", len(s.history))
+	if len(s.History()) != 6 {
+		t.Fatalf("history len = %d, want 6", len(s.History()))
 	}
 }
 
@@ -332,8 +332,8 @@ func TestSingleTurnOverBudgetAbort(t *testing.T) {
 	if called {
 		t.Fatal("summarizer called on single-turn over-budget")
 	}
-	if len(s.history) != 1 || s.summary != "" {
-		t.Fatalf("history=%+v summary=%q, want unchanged", s.history, s.summary)
+	if len(s.History()) != 1 || s.Summary() != "" {
+		t.Fatalf("history=%+v summary=%q, want unchanged", s.History(), s.Summary())
 	}
 }
 
@@ -355,15 +355,15 @@ func TestBoundaryFixWouldDropCurrentTurnAbort(t *testing.T) {
 	if called {
 		t.Fatal("summarizer called when boundary fix would drop current turn")
 	}
-	if len(s.history) != 2 || s.summary != "" {
-		t.Fatalf("history=%+v summary=%q, want unchanged", s.history, s.summary)
+	if len(s.History()) != 2 || s.Summary() != "" {
+		t.Fatalf("history=%+v summary=%q, want unchanged", s.History(), s.Summary())
 	}
 }
 
 // 摘要存在但 history 为空：GetWorkingMemory 仅返回摘要消息。
 func TestWorkingMemorySummaryOnly(t *testing.T) {
 	s := context2.NewSession("so", t.TempDir())
-	s.summary = "direct"
+	s.SetSummary("direct")
 	out := s.GetWorkingMemory(context.Background())
 	if len(out) != 1 || out[0].Role != schema.RoleUser || !strings.HasPrefix(out[0].Content, "【历史会话摘要】") {
 		t.Fatalf("summary-only working memory wrong: %+v", out)
@@ -415,16 +415,16 @@ func TestPersistenceRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSession: %v", err)
 	}
-	if loaded.summary != "s1" {
-		t.Fatalf("loaded summary = %q, want s1", loaded.summary)
+	if loaded.Summary() != "s1" {
+		t.Fatalf("loaded summary = %q, want s1", loaded.Summary())
 	}
-	if len(loaded.history) != 6 {
-		t.Fatalf("loaded history len = %d, want 6", len(loaded.history))
+	if len(loaded.History()) != 6 {
+		t.Fatalf("loaded history len = %d, want 6", len(loaded.History()))
 	}
 
 	// 缺失文件 → 空会话，不报错
 	ghost, err := context2.LoadSession("ghost", dir)
-	if err != nil || len(ghost.history) != 0 || ghost.summary != "" {
+	if err != nil || len(ghost.History()) != 0 || ghost.Summary() != "" {
 		t.Fatalf("LoadSession(missing) = %+v, %v; want empty session", ghost, err)
 	}
 }
@@ -448,8 +448,8 @@ func TestLoadSessionSkipsInvalidLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSession: %v", err)
 	}
-	if loaded.summary != "s9" || len(loaded.history) != 1 || loaded.history[0].Content != "hi" {
-		t.Fatalf("loaded summary=%q history=%+v, want s9 + [hi] (system line skipped)", loaded.summary, loaded.history)
+	if loaded.Summary() != "s9" || len(loaded.History()) != 1 || loaded.History()[0].Content != "hi" {
+		t.Fatalf("loaded summary=%q history=%+v, want s9 + [hi] (system line skipped)", loaded.Summary(), loaded.History())
 	}
 }
 
@@ -481,16 +481,16 @@ func TestDiskErrorsNoPanic(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		s.Append(ctx, contentMsg(schema.RoleUser, 400))
 	}
-	if s.summary != "s1" {
-		t.Fatalf("summary = %q, want s1 despite disk errors", s.summary)
+	if s.Summary() != "s1" {
+		t.Fatalf("summary = %q, want s1 despite disk errors", s.Summary())
 	}
-	if len(s.history) != 6 {
-		t.Fatalf("history len = %d, want 6 (in-memory compression still applied)", len(s.history))
+	if len(s.History()) != 6 {
+		t.Fatalf("history len = %d, want 6 (in-memory compression still applied)", len(s.History()))
 	}
-	if !s.mu.TryLock() {
+	if !s.Mu.TryLock() {
 		t.Fatal("session mutex left locked")
 	}
-	s.mu.Unlock()
+	s.Mu.Unlock()
 }
 
 // system 提示词误入 Append → 丢弃 + 告警：不进 history、不落盘。
@@ -505,12 +505,12 @@ func TestAppendDropsSystemMessage(t *testing.T) {
 		contentMsg(schema.RoleAssistant, 10),
 	)
 
-	if len(s.history) != 2 {
-		t.Fatalf("history len = %d, want 2 (system dropped)", len(s.history))
+	if len(s.History()) != 2 {
+		t.Fatalf("history len = %d, want 2 (system dropped)", len(s.History()))
 	}
-	for _, m := range s.history {
+	for _, m := range s.History() {
 		if m.Role == schema.RoleSystem {
-			t.Fatalf("system message leaked into history: %+v", s.history)
+			t.Fatalf("system message leaked into history: %+v", s.History())
 		}
 	}
 
@@ -525,8 +525,8 @@ func TestAppendDropsSystemMessage(t *testing.T) {
 	// 全部为 system → 直接返回，不建文件、不 panic
 	s2 := context2.NewSession("sys2", dir, context2.WithContextWindow(2000))
 	s2.Append(ctx, contentMsg(schema.RoleSystem, 500))
-	if len(s2.history) != 0 {
-		t.Fatalf("all-system append left history len = %d, want 0", len(s2.history))
+	if len(s2.History()) != 0 {
+		t.Fatalf("all-system append left history len = %d, want 0", len(s2.History()))
 	}
 	if _, err := os.Stat(filepath.Join(dir, "sessions", "sys2.json")); !os.IsNotExist(err) {
 		t.Fatal("all-system append should not create session file")

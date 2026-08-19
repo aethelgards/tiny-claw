@@ -2,7 +2,7 @@ package schema
 
 import "encoding/json"
 
-type Rule string
+type Role string
 
 const (
 	RoleSystem    = "System"
@@ -11,7 +11,7 @@ const (
 )
 
 type Message struct {
-	Role    Rule   `json:"role"`
+	Role    Role   `json:"role"`
 	Content string `json:"content"`
 
 	ToolCalls []ToolCall `json:"tool_calls"`
