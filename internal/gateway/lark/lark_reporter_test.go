@@ -75,14 +75,36 @@ func TestSendApprovalMessageError(t *testing.T) {
 	}
 }
 
-func TestReporterTextSendStillWorks(t *testing.T) {
+func TestReporterOnMessageSendsMarkdownCard(t *testing.T) {
 	fake := &fakeMessageSender{}
 	rep := newLarkReporter(fake, "chat1", "tk1")
 	rep.OnMessage(context.Background(), "hi")
-	if len(fake.texts) != 1 || fake.texts[0] != "hi" {
-		t.Fatalf("OnMessage 应走 SendMessage 发送文本，得到 %v", fake.texts)
+	if len(fake.cards) != 1 {
+		t.Fatalf("OnMessage 应发送 1 张 markdown 卡片，实际 %d", len(fake.cards))
 	}
-	if len(fake.cards) != 0 {
-		t.Fatalf("文本消息不应触发卡片发送，实际 %v", fake.cards)
+	if len(fake.texts) != 0 {
+		t.Fatalf("OnMessage 不应发送文本消息，实际 %v", fake.texts)
+	}
+	var root map[string]any
+	if err := json.Unmarshal([]byte(fake.cards[0]), &root); err != nil {
+		t.Fatalf("卡片 JSON 解析失败: %v", err)
+	}
+	if root["schema"] != "2.0" {
+		t.Fatalf("卡片 schema = %v, want 2.0", root["schema"])
+	}
+	body, ok := root["body"].(map[string]any)
+	if !ok {
+		t.Fatal("卡片缺少 body")
+	}
+	elements, ok := body["elements"].([]any)
+	if !ok || len(elements) != 1 {
+		t.Fatalf("卡片 body 应含 1 个元素，实际 %v", elements)
+	}
+	elem, ok := elements[0].(map[string]any)
+	if !ok || elem["tag"] != "markdown" {
+		t.Fatalf("元素 tag 应为 markdown，实际 %v", elem)
+	}
+	if elem["content"] != "hi" {
+		t.Fatalf("卡片 content = %v, want hi", elem["content"])
 	}
 }

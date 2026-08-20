@@ -50,6 +50,19 @@ func (l *LarkReporter) send(ctx context.Context, content string) error {
 	return nil
 }
 
+// sendCard 串行发送一张卡片消息到 chat；失败仅记录日志，不中断引擎主流程。
+func (l *LarkReporter) sendCard(ctx context.Context, cardJSON string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := l.bot.SendCardMessage(ctx, l.chatID, l.tenantKey, cardJSON); err != nil {
+		slog.ErrorContext(ctx, "lark reporter send card failed",
+			slog.String("chatID", l.chatID),
+			slog.String("err", err.Error()))
+		return err
+	}
+	return nil
+}
+
 func (l *LarkReporter) OnThinking(ctx context.Context) {
 	//_ = l.send(ctx, "🤔 思考中…")
 }
@@ -64,7 +77,13 @@ func (l *LarkReporter) OnToolResult(ctx context.Context, toolName string, result
 	}
 }
 
+// OnMessage 以 markdown 卡片发送引擎最终输出，支持渲染 md 格式内容；
+// 卡片构建失败时回退为纯文本发送。
 func (l *LarkReporter) OnMessage(ctx context.Context, content string) {
+	if card := BuildMarkdownCard(content); card != "" {
+		_ = l.sendCard(ctx, card)
+		return
+	}
 	_ = l.send(ctx, content)
 }
 
@@ -74,12 +93,5 @@ func (l *LarkReporter) SendApprovalMessage(ctx context.Context, taskID string, t
 	if card == "" {
 		return fmt.Errorf("build approval card failed: taskID=%s", taskID)
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if err := l.bot.SendCardMessage(ctx, l.chatID, l.tenantKey, card); err != nil {
-		slog.ErrorContext(ctx, "lark reporter send approval card failed",
-			slog.String("chatID", l.chatID), slog.String("err", err.Error()))
-		return err
-	}
-	return nil
+	return l.sendCard(ctx, card)
 }
