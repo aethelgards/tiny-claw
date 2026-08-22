@@ -34,6 +34,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
 	s.mux.HandleFunc("GET /api/sessions/{id}/traces", s.handleGetTraces)
 	s.mux.HandleFunc("GET /api/sessions/{id}/tools", s.handleGetTools)
+	s.mux.HandleFunc("GET /api/stats/overview", s.handleStatsOverview)
+	s.mux.HandleFunc("GET /api/stats/daily", s.handleStatsDaily)
+	s.mux.HandleFunc("GET /api/stats/models", s.handleStatsModels)
+	s.mux.HandleFunc("GET /api/stats/tools", s.handleStatsTools)
 }
 
 // Start starts the HTTP server listening on addr. It blocks until the
