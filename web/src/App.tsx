@@ -1,8 +1,25 @@
+import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import Layout from './components/layout/Layout'
+import Dashboard from './pages/Dashboard'
+
+function Placeholder() {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <p className="text-sm text-gray-500">页面开发中</p>
+    </div>
+  )
+}
+
 function App() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-950 text-gray-100">
-      <h1 className="text-3xl font-bold tracking-tight">tiny-claw Dashboard</h1>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route element={<Layout />}>
+          <Route index element={<Dashboard />} />
+          <Route path="*" element={<Placeholder />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
   )
 }
 
