@@ -30,6 +30,10 @@ func NewServer(storage *observability.Storage) *Server {
 // routes registers the API endpoints on the server's mux.
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
+	s.mux.HandleFunc("GET /api/sessions", s.handleListSessions)
+	s.mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
+	s.mux.HandleFunc("GET /api/sessions/{id}/traces", s.handleGetTraces)
+	s.mux.HandleFunc("GET /api/sessions/{id}/tools", s.handleGetTools)
 }
 
 // Start starts the HTTP server listening on addr. It blocks until the
