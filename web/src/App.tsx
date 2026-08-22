@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import Layout from './components/layout/Layout'
 import Dashboard from './pages/Dashboard'
+import Sessions from './pages/Sessions'
 
 function Placeholder() {
   return (
@@ -16,6 +17,7 @@ function App() {
       <Routes>
         <Route element={<Layout />}>
           <Route index element={<Dashboard />} />
+          <Route path="sessions" element={<Sessions />} />
           <Route path="*" element={<Placeholder />} />
         </Route>
       </Routes>
