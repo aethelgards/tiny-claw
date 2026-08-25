@@ -7,14 +7,18 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
 )
 
+var spanCounter atomic.Int64
+
 type traceKey struct{}
 
 type Span struct {
+	SpanID     string
 	Name       string
 	StartTime  time.Time
 	EndTime    time.Time
@@ -26,6 +30,7 @@ type Span struct {
 
 func StartSpan(ctx context.Context, name string) (context.Context, *Span) {
 	span := &Span{
+		SpanID:     fmt.Sprintf("span_%d", spanCounter.Add(1)),
 		Name:       name,
 		StartTime:  time.Now(),
 		Attributes: make(map[string]any),
@@ -54,6 +59,15 @@ func (s *Span) AddAttribute(key string, value any) {
 	s.mu.Lock()
 	s.Attributes[key] = value
 	s.mu.Unlock()
+}
+
+// CurrentSpanID returns the SpanID of the span currently active in ctx,
+// or empty string if no span is active.
+func CurrentSpanID(ctx context.Context) string {
+	if span, ok := ctx.Value(traceKey{}).(*Span); ok {
+		return span.SpanID
+	}
+	return ""
 }
 
 func ExportTraceToFile(rootSpan *Span, workDir string, sessionID string) error {
