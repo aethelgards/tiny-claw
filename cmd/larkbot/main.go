@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/aethelgards/tiny-claw/internal/approval"
@@ -13,6 +14,8 @@ import (
 	"github.com/aethelgards/tiny-claw/internal/engine"
 	"github.com/aethelgards/tiny-claw/internal/gateway/lark"
 	"github.com/aethelgards/tiny-claw/internal/helper"
+	"github.com/aethelgards/tiny-claw/internal/memory"
+	"github.com/aethelgards/tiny-claw/internal/observability"
 	"github.com/aethelgards/tiny-claw/internal/provider"
 	"github.com/aethelgards/tiny-claw/internal/tools"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
@@ -61,6 +64,44 @@ func main() {
 		slog.Error("register skill failed", slog.String("err", err.Error()))
 	}
 
+	// 记忆系统接线
+	home, _ := os.UserHomeDir()
+	var storeOpts []memory.StoreOption
+	var embedder provider.Embedder
+	if settings.Memory != nil && settings.Memory.Embedding != nil && settings.Memory.Embedding.Model != "" {
+		emb, err := provider.NewOpenAIEmbedder(settings.Memory.Embedding, settings.APIKey, settings.BaseURL)
+		if err != nil {
+			slog.Warn("embedding 初始化失败，将使用纯关键词检索", "err", err)
+		} else {
+			embedder = emb
+			storeOpts = append(storeOpts, memory.WithEmbedder(emb))
+			if settings.Memory.Embedding.MinScore > 0 {
+				storeOpts = append(storeOpts, memory.WithMinScore(settings.Memory.Embedding.MinScore))
+			}
+		}
+	}
+	memStore, err := memory.NewMemoryStore(
+		filepath.Join(home, ".claw", "memory"),
+		filepath.Join(settings.WorkDir, ".claw", "memory"),
+		storeOpts...,
+	)
+	if err != nil {
+		slog.Error("记忆存储初始化失败", "err", err)
+		os.Exit(1)
+	}
+
+	// 记忆三工具注册
+	for _, tool := range []tools.BaseTool{
+		memory.NewSaveMemoryTool(memStore),
+		memory.NewRecallMemoryTool(memStore),
+		memory.NewForgetMemoryTool(memStore),
+	} {
+		if err := reg.Registry(tool); err != nil {
+			slog.Error("记忆工具注册失败", "err", err)
+			os.Exit(1)
+		}
+	}
+
 	// 审批：创建审批管理器并接入注册表中间件（危险命令经卡片审批；非法超时回退默认 5m）
 	approvalMgr := approval.NewApprovalManager(approval.ParseApprovalTimeout(settings.ApprovalTimeout))
 	reg.Use(approval.ApprovalMiddleware(approvalMgr))
@@ -68,8 +109,22 @@ func main() {
 	queue := lark.NewMessageQueue(settings.LarkChannelSize)
 	bot := lark.NewBot(settings.LarkAppID, settings.LarkAppSecret)
 
+	composer := ctxpkg.NewPromptComposer(settings.WorkDir, settings.PlanMode)
+	composer.WithMemoryInjector(memory.NewMemoryInjector(memStore, settings.Memory.MaxInjectTokens))
+
+	// EngineProcessor needs the store to be set
+	var epOpts []lark.EngineProcessorOption
+	if embedder != nil {
+		epOpts = append(epOpts, lark.WithEmbedder(embedder))
+	}
+	engineProcessor := lark.NewEngineProcessor(p, reg, *settings, bot, composer, epOpts...)
+	engineProcessor.SetMemoryStore(memStore)
+
+	storage := observability.NewStorage(filepath.Join(settings.WorkDir, ".claw"))
+	engineProcessor.WithStorage(storage)
+
 	worker := lark.NewWorker(queue,
-		lark.NewEngineProcessor(p, reg, *settings, bot, ctxpkg.NewPromptComposer(settings.WorkDir, settings.PlanMode)),
+		engineProcessor,
 		func(ctx context.Context, msg lark.IncomingMessage, err error) {
 			reply := "处理消息失败：" + err.Error()
 			if len(reply) > 400 {
