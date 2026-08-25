@@ -26,10 +26,12 @@ type AgentEngine struct {
 	WorkDir          string
 	EnableThink      bool
 	promptComposer   *ctxpkg.PromptComposer
-	session          *ctxpkg.Session // 多轮会话；nil 时每次 Run 使用独立上下文
+	session          *ctxpkg.Session
 	recovery         *ctxpkg.RecoveryManager
 	reminderInjector ReminderInjector
 	settings         config.Settings
+	storage          *observability.Storage
+	userPrompt       string
 }
 
 func NewAgentEngine(p provider.LLMProvider,
@@ -53,14 +55,19 @@ func NewAgentEngine(p provider.LLMProvider,
 	}
 }
 
-// WithSession 绑定持久化会话；为 nil 时每次 Run 使用独立上下文（无多轮记忆）。
 func (e *AgentEngine) WithSession(s *ctxpkg.Session) *AgentEngine {
 	e.session = s
-	observability.NewCostTracker(e.provider, e.settings.Model, s)
+	_ = observability.NewCostTracker(e.provider, e.settings.Model, s)
+	return e
+}
+
+func (e *AgentEngine) WithStorage(s *observability.Storage) *AgentEngine {
+	e.storage = s
 	return e
 }
 
 func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
+	e.userPrompt = userPrompt
 	slog.InfoContext(ctx, "engine start", slog.String("workDir", e.WorkDir), slog.Bool("enableThinking", e.EnableThink))
 	ctxHistory := []schema.Message{e.promptComposer.Build()}
 	userMsg := schema.Message{
@@ -86,6 +93,9 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 		}
 		if err := trace.ExportTraceToFile(rootSpan, e.WorkDir, sessionID); err != nil {
 			slog.ErrorContext(ctx, "failed to export trace to file", slog.String("error", err.Error()))
+		}
+		if e.storage != nil && e.session != nil {
+			e.persistObservabilityData(ctx, rootSpan)
 		}
 	}()
 
@@ -147,6 +157,71 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 		e.session.Append(ctx, turnMsgs...)
 	}
 	return nil
+}
+
+func (e *AgentEngine) persistObservabilityData(ctx context.Context, rootSpan *trace.Span) {
+	if e.storage == nil {
+		return
+	}
+
+	sessionID := ""
+	if e.session != nil {
+		sessionID = e.session.ID
+	}
+	if sessionID == "" {
+		return
+	}
+
+	if e.session != nil {
+		e.session.Mu.Lock()
+		sessData := observability.SessionData{
+			ID:        sessionID,
+			CreatedAt: e.session.CreatedAt,
+			UpdatedAt: e.session.UpdatedAt,
+			Prompt:    e.userPrompt,
+			Model:     e.settings.Model,
+			Status:    observability.StatusCompleted,
+			TotalTokens: observability.TokenUsage{
+				PromptTokens:     e.session.TotalPromptTokens,
+				CompletionTokens: e.session.TotalCompletionTokens,
+				TotalTokens:      e.session.TotalPromptTokens + e.session.TotalCompletionTokens,
+			},
+			TotalCost:  e.session.TotalCostCNY,
+			DurationMS: rootSpan.DurationMS,
+		}
+		e.session.Mu.Unlock()
+
+		if err := e.storage.SaveSession(sessData); err != nil {
+			slog.ErrorContext(ctx, "failed to save session to observability storage",
+				slog.String("sessionID", sessionID), slog.String("error", err.Error()))
+		}
+	}
+
+	flattenSpans(rootSpan, sessionID, "", func(entry observability.TraceEntry) {
+		if err := e.storage.SaveTrace(entry); err != nil {
+			slog.ErrorContext(ctx, "failed to save trace to observability storage",
+				slog.String("sessionID", sessionID), slog.String("spanID", entry.SpanID),
+				slog.String("error", err.Error()))
+		}
+	})
+}
+
+func flattenSpans(span *trace.Span, sessionID string, parentID string, fn func(observability.TraceEntry)) {
+	fn(observability.TraceEntry{
+		SessionID:  sessionID,
+		SpanID:     span.SpanID,
+		ParentID:   parentID,
+		Name:       span.Name,
+		StartTime:  span.StartTime,
+		EndTime:    span.EndTime,
+		DurationMS: span.DurationMS,
+		Attributes: span.Attributes,
+		Status:     observability.SpanOK,
+	})
+
+	for _, child := range span.GetChildren() {
+		flattenSpans(child, sessionID, span.SpanID, fn)
+	}
 }
 
 func (e *AgentEngine) parallelExecTools(ctx context.Context, isSubAgent bool, calls []schema.ToolCall) ([]schema.Message, map[string]lo.Tuple2[schema.ToolCall, schema.ToolResult]) {

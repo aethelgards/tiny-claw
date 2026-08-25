@@ -61,6 +61,14 @@ func (s *Span) AddAttribute(key string, value any) {
 	s.mu.Unlock()
 }
 
+func (s *Span) GetChildren() []*Span {
+	s.mu.Lock()
+	children := make([]*Span, len(s.Children))
+	copy(children, s.Children)
+	s.mu.Unlock()
+	return children
+}
+
 // CurrentSpanID returns the SpanID of the span currently active in ctx,
 // or empty string if no span is active.
 func CurrentSpanID(ctx context.Context) string {
