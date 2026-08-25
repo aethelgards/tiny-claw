@@ -49,7 +49,7 @@ func (t *CostTracker) Generate(ctx context.Context, msgs []schema.Message, avali
 		}
 		slog.InfoContext(ctx, "tracker model cost", slog.Float64("cost", cost), slog.Int64("timeCost", latency.Microseconds()))
 		if t.session != nil {
-			t.session.RecordUsage(respMsg.Usage.PromptTokens, respMsg.Usage.PromptTokens, cost)
+			t.session.RecordUsage(respMsg.Usage.PromptTokens, respMsg.Usage.CompletionTokens, cost)
 		}
 	}
 
