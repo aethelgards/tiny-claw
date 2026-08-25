@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/aethelgards/tiny-claw/internal/config"
 	ctxpkg "github.com/aethelgards/tiny-claw/internal/context"
@@ -237,7 +238,27 @@ func (e *AgentEngine) parallelExecTools(ctx context.Context, isSubAgent bool, ca
 				e.reporter.OnToolCall(ctx, call.Name, string(call.Arguments))
 			}
 			slog.InfoContext(ctx, "🛠->️ tool call", slog.Int("parallelIdx", parallelId), slog.String("toolName", call.Name), slog.String("args", string(call.Arguments)))
+			startTime := time.Now()
 			result := e.registry.Execute(ctx, call)
+			durationMS := time.Since(startTime).Milliseconds()
+
+			if e.storage != nil && e.session != nil {
+				record := observability.ToolCallRecord{
+					SessionID:  e.session.ID,
+					SpanID:     trace.CurrentSpanID(ctx),
+					ToolName:   call.Name,
+					Arguments:  string(call.Arguments),
+					Result:     result.Output,
+					IsError:    result.IsError,
+					DurationMS: durationMS,
+					StartTime:  startTime,
+				}
+				if err := e.storage.SaveToolCall(record); err != nil {
+					slog.ErrorContext(ctx, "failed to save tool call to observability storage",
+						slog.String("toolName", call.Name), slog.String("error", err.Error()))
+				}
+			}
+
 			if result.IsError {
 				slog.WarnContext(ctx, "❌->tool call failed", slog.String("failedInfo", result.Output))
 				if errAnalyseResult := e.recovery.AnalyseAndInject(call.Name, result.Err); errAnalyseResult != "" {
