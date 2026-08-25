@@ -27,6 +27,12 @@ export interface TraceEntry {
   duration_ms: number;
   status: 'ok' | 'error';
   error?: string;
+  attributes?: Record<string, unknown>;
+}
+
+/** A trace span nested with its child spans, as returned by the API. */
+export interface SpanNode extends TraceEntry {
+  children: SpanNode[];
 }
 
 export interface ToolCallRecord {
@@ -84,7 +90,8 @@ export interface SessionListResponse {
 }
 
 export interface TraceListResponse {
-  traces: TraceEntry[];
+  session_id: string;
+  traces: SpanNode[];
 }
 
 export interface ToolCallListResponse {

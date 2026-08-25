@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api/client';
-import type { ToolCallRecord, TraceEntry } from '../api/types';
+import type { SpanNode, ToolCallRecord } from '../api/types';
 
 export interface UseTracesState {
-  traces: TraceEntry[];
+  traces: SpanNode[];
   tools: ToolCallRecord[];
   loading: boolean;
   error: Error | null;
@@ -11,7 +11,7 @@ export interface UseTracesState {
 }
 
 export function useTraces(sessionId: string | undefined): UseTracesState {
-  const [traces, setTraces] = useState<TraceEntry[]>([]);
+  const [traces, setTraces] = useState<SpanNode[]>([]);
   const [tools, setTools] = useState<ToolCallRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
