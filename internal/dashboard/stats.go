@@ -19,10 +19,22 @@ type overviewResponse struct {
 
 // dailyEntry represents aggregated stats for a single day.
 type dailyEntry struct {
-	Date     string  `json:"date"`
-	Sessions int     `json:"sessions"`
-	Cost     float64 `json:"cost"`
-	Tokens   int64   `json:"tokens"`
+	Date          string  `json:"date"`
+	Sessions      int     `json:"sessions"`
+	Cost          float64 `json:"cost"`
+	Tokens        int64   `json:"tokens"`
+	AvgDurationMS int64   `json:"avg_duration_ms"`
+	SuccessRate   float64 `json:"success_rate"`
+}
+
+// dailyAggregate accumulates raw session values for one day before
+// derived fields (averages, rates) are computed.
+type dailyAggregate struct {
+	sessions     int
+	cost         float64
+	tokens       int64
+	durationMS   int64
+	completedCnt int
 }
 
 // dailyResponse is the JSON payload returned by GET /api/stats/daily.
@@ -45,8 +57,9 @@ type modelsResponse struct {
 
 // toolEntry represents aggregated stats for a single tool.
 type toolEntry struct {
-	Tool         string `json:"tool"`
-	Count        int    `json:"count"`
+	ToolName      string `json:"tool_name"`
+	Calls         int    `json:"calls"`
+	Errors        int    `json:"errors"`
 	AvgDurationMS int64  `json:"avg_duration_ms"`
 }
 
@@ -101,22 +114,36 @@ func (s *Server) handleStatsDaily(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dailyMap := make(map[string]*dailyEntry)
+	dailyMap := make(map[string]*dailyAggregate)
 	for _, sess := range sessions {
 		date := sess.CreatedAt.Format(time.DateOnly)
-		entry, ok := dailyMap[date]
+		agg, ok := dailyMap[date]
 		if !ok {
-			entry = &dailyEntry{Date: date}
-			dailyMap[date] = entry
+			agg = &dailyAggregate{}
+			dailyMap[date] = agg
 		}
-		entry.Sessions++
-		entry.Cost += sess.TotalCost
-		entry.Tokens += sess.TotalTokens.TotalTokens
+		agg.sessions++
+		agg.cost += sess.TotalCost
+		agg.tokens += sess.TotalTokens.TotalTokens
+		agg.durationMS += sess.DurationMS
+		if sess.Status == observability.StatusCompleted {
+			agg.completedCnt++
+		}
 	}
 
 	daily := make([]dailyEntry, 0, len(dailyMap))
-	for _, entry := range dailyMap {
-		daily = append(daily, *entry)
+	for date, agg := range dailyMap {
+		entry := dailyEntry{
+			Date:     date,
+			Sessions: agg.sessions,
+			Cost:     agg.cost,
+			Tokens:   agg.tokens,
+		}
+		if agg.sessions > 0 {
+			entry.AvgDurationMS = agg.durationMS / int64(agg.sessions)
+			entry.SuccessRate = float64(agg.completedCnt) / float64(agg.sessions)
+		}
+		daily = append(daily, entry)
 	}
 	sort.Slice(daily, func(i, j int) bool {
 		return daily[i].Date > daily[j].Date
@@ -173,23 +200,26 @@ func (s *Server) handleStatsTools(w http.ResponseWriter, r *http.Request) {
 		for _, record := range records {
 			entry, ok := toolMap[record.ToolName]
 			if !ok {
-				entry = &toolEntry{Tool: record.ToolName}
+				entry = &toolEntry{ToolName: record.ToolName}
 				toolMap[record.ToolName] = entry
 			}
-			entry.Count++
+			entry.Calls++
 			entry.AvgDurationMS += record.DurationMS
+			if record.IsError {
+				entry.Errors++
+			}
 		}
 	}
 
 	tools := make([]toolEntry, 0, len(toolMap))
 	for _, entry := range toolMap {
-		if entry.Count > 0 {
-			entry.AvgDurationMS = entry.AvgDurationMS / int64(entry.Count)
+		if entry.Calls > 0 {
+			entry.AvgDurationMS = entry.AvgDurationMS / int64(entry.Calls)
 		}
 		tools = append(tools, *entry)
 	}
 	sort.Slice(tools, func(i, j int) bool {
-		return tools[i].Count > tools[j].Count
+		return tools[i].Calls > tools[j].Calls
 	})
 
 	writeJSON(w, http.StatusOK, toolsStatsResponse{Tools: tools})

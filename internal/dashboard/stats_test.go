@@ -16,20 +16,20 @@ func TestHandleStatsOverview(t *testing.T) {
 
 	// Seed test data
 	storage.SaveSession(observability.SessionData{
-		ID:        "s1",
-		Model:     "glm-4.6",
-		Status:    observability.StatusCompleted,
-		TotalCost: 0.01,
+		ID:          "s1",
+		Model:       "glm-4.6",
+		Status:      observability.StatusCompleted,
+		TotalCost:   0.01,
 		TotalTokens: observability.TokenUsage{TotalTokens: 1000},
-		DurationMS: 100,
+		DurationMS:  100,
 	})
 	storage.SaveSession(observability.SessionData{
-		ID:        "s2",
-		Model:     "glm-4.6",
-		Status:    observability.StatusRunning,
-		TotalCost: 0.02,
+		ID:          "s2",
+		Model:       "glm-4.6",
+		Status:      observability.StatusRunning,
+		TotalCost:   0.02,
 		TotalTokens: observability.TokenUsage{TotalTokens: 2000},
-		DurationMS: 200,
+		DurationMS:  200,
 	})
 
 	req := httptest.NewRequest("GET", "/api/stats/overview", nil)
@@ -62,18 +62,20 @@ func TestHandleStatsDaily(t *testing.T) {
 
 	now := time.Now()
 	storage.SaveSession(observability.SessionData{
-		ID:        "s1",
-		CreatedAt: now,
-		Status:    observability.StatusCompleted,
-		TotalCost: 0.01,
+		ID:          "s1",
+		CreatedAt:   now,
+		Status:      observability.StatusCompleted,
+		TotalCost:   0.01,
 		TotalTokens: observability.TokenUsage{TotalTokens: 1000},
+		DurationMS:  100,
 	})
 	storage.SaveSession(observability.SessionData{
-		ID:        "s2",
-		CreatedAt: now,
-		Status:    observability.StatusCompleted,
-		TotalCost: 0.02,
+		ID:          "s2",
+		CreatedAt:   now,
+		Status:      observability.StatusFailed,
+		TotalCost:   0.02,
 		TotalTokens: observability.TokenUsage{TotalTokens: 2000},
+		DurationMS:  300,
 	})
 
 	req := httptest.NewRequest("GET", "/api/stats/daily", nil)
@@ -98,6 +100,12 @@ func TestHandleStatsDaily(t *testing.T) {
 	if resp.Daily[0].Tokens != 3000 {
 		t.Errorf("expected 3000 tokens, got %d", resp.Daily[0].Tokens)
 	}
+	if resp.Daily[0].AvgDurationMS != 200 {
+		t.Errorf("expected avg duration 200ms, got %d", resp.Daily[0].AvgDurationMS)
+	}
+	if resp.Daily[0].SuccessRate != 0.5 {
+		t.Errorf("expected success rate 0.5, got %f", resp.Daily[0].SuccessRate)
+	}
 }
 
 func TestHandleStatsModels(t *testing.T) {
@@ -105,15 +113,15 @@ func TestHandleStatsModels(t *testing.T) {
 	server := NewServer(storage)
 
 	storage.SaveSession(observability.SessionData{
-		ID:        "s1",
-		Model:     "glm-4.6",
-		TotalCost: 0.01,
+		ID:          "s1",
+		Model:       "glm-4.6",
+		TotalCost:   0.01,
 		TotalTokens: observability.TokenUsage{TotalTokens: 1000},
 	})
 	storage.SaveSession(observability.SessionData{
-		ID:        "s2",
-		Model:     "deepseek-v4",
-		TotalCost: 0.02,
+		ID:          "s2",
+		Model:       "deepseek-v4",
+		TotalCost:   0.02,
 		TotalTokens: observability.TokenUsage{TotalTokens: 2000},
 	})
 
@@ -155,6 +163,12 @@ func TestHandleStatsTools(t *testing.T) {
 	})
 	storage.SaveToolCall(observability.ToolCallRecord{
 		SessionID:  "s1",
+		ToolName:   "read_file",
+		DurationMS: 300,
+		IsError:    true,
+	})
+	storage.SaveToolCall(observability.ToolCallRecord{
+		SessionID:  "s1",
 		ToolName:   "write_file",
 		DurationMS: 50,
 	})
@@ -175,10 +189,27 @@ func TestHandleStatsTools(t *testing.T) {
 	if len(resp.Tools) != 2 {
 		t.Fatalf("expected 2 tool entries, got %d", len(resp.Tools))
 	}
-	// read_file should have count 2
 	for _, tool := range resp.Tools {
-		if tool.Tool == "read_file" && tool.Count != 2 {
-			t.Errorf("expected read_file count 2, got %d", tool.Count)
+		switch tool.ToolName {
+		case "read_file":
+			if tool.Calls != 3 {
+				t.Errorf("expected read_file calls 3, got %d", tool.Calls)
+			}
+			if tool.Errors != 1 {
+				t.Errorf("expected read_file errors 1, got %d", tool.Errors)
+			}
+			if tool.AvgDurationMS != 200 {
+				t.Errorf("expected read_file avg duration 200ms, got %d", tool.AvgDurationMS)
+			}
+		case "write_file":
+			if tool.Calls != 1 {
+				t.Errorf("expected write_file calls 1, got %d", tool.Calls)
+			}
+			if tool.Errors != 0 {
+				t.Errorf("expected write_file errors 0, got %d", tool.Errors)
+			}
+		default:
+			t.Errorf("unexpected tool %q", tool.ToolName)
 		}
 	}
 }

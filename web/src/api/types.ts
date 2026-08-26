@@ -59,6 +59,8 @@ export interface DailyStat {
   sessions: number;
   cost: number;
   tokens: number;
+  avg_duration_ms: number;
+  success_rate: number;
 }
 
 export interface ModelStat {
