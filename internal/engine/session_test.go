@@ -383,7 +383,7 @@ func TestPersistenceRoundTrip(t *testing.T) {
 	for i := 0; i < 7; i++ {
 		s.Append(ctx, contentMsg(schema.RoleUser, 400))
 	}
-	file := filepath.Join(dir, "sessions", "sess-1.json")
+	file := context2.SessionFilePath(dir, "sess-1")
 	raw := mustLoadFile(t, file)
 	if lines := strings.Count(strings.TrimSpace(raw), "\n") + 1; lines != 7 {
 		t.Fatalf("file lines before compress = %d, want 7", lines)
@@ -432,7 +432,7 @@ func TestPersistenceRoundTrip(t *testing.T) {
 // 文件含非 JSON 行：跳过、不报错，摘要与消息仍恢复。
 func TestLoadSessionSkipsInvalidLine(t *testing.T) {
 	dir := t.TempDir()
-	file := filepath.Join(dir, "sessions", "dirty.json")
+	file := context2.SessionFilePath(dir, "dirty")
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -456,7 +456,7 @@ func TestLoadSessionSkipsInvalidLine(t *testing.T) {
 // 会话路径是目录 → ReadFile 报非"不存在"错误 → LoadSession 返回错误。
 func TestLoadSessionReadError(t *testing.T) {
 	dir := t.TempDir()
-	bad := filepath.Join(dir, "sessions", "sess.json")
+	bad := context2.SessionFilePath(dir, "sess")
 	if err := os.MkdirAll(bad, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -514,7 +514,7 @@ func TestAppendDropsSystemMessage(t *testing.T) {
 		}
 	}
 
-	raw := mustLoadFile(t, filepath.Join(dir, "sessions", "sys.json"))
+	raw := mustLoadFile(t, context2.SessionFilePath(dir, "sys"))
 	if strings.Contains(raw, "System") {
 		t.Fatalf("system message persisted: %s", raw)
 	}
@@ -528,7 +528,7 @@ func TestAppendDropsSystemMessage(t *testing.T) {
 	if len(s2.History()) != 0 {
 		t.Fatalf("all-system append left history len = %d, want 0", len(s2.History()))
 	}
-	if _, err := os.Stat(filepath.Join(dir, "sessions", "sys2.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(context2.SessionFilePath(dir, "sys2")); !os.IsNotExist(err) {
 		t.Fatal("all-system append should not create session file")
 	}
 }

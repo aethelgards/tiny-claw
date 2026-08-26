@@ -67,7 +67,7 @@ func TestRunWithoutSessionStateless(t *testing.T) {
 	if err := agent.Run(context.Background(), "hello"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(workDir, "sessions")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(workDir, ".claw", "sessions")); !os.IsNotExist(err) {
 		t.Fatalf("without WithSession no sessions dir expected, err=%v", err)
 	}
 }

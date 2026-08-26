@@ -3,7 +3,6 @@ package engine
 import (
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 
@@ -60,7 +59,7 @@ func (sm *SessionMessage) Delete(sessionID string) {
 	}
 	session.Mu.Lock()
 	defer session.Mu.Unlock()
-	path := filepath.Join(session.WorkDir, "sessions", sessionID+".json")
+	path := context.SessionFilePath(session.WorkDir, sessionID)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		slog.Warn("session delete: remove file failed",
 			slog.String("sessionID", sessionID), slog.String("err", err.Error()))

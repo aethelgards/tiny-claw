@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -22,7 +21,7 @@ func appendMsg(t *testing.T, s *context2.Session, content string) {
 
 func sessionFile(t *testing.T, workDir, sessionID string) string {
 	t.Helper()
-	return filepath.Join(workDir, "sessions", sessionID+".json")
+	return context2.SessionFilePath(workDir, sessionID)
 }
 
 // ---- GetOrCreate ----

@@ -58,7 +58,7 @@ func NewAgentEngine(p provider.LLMProvider,
 
 func (e *AgentEngine) WithSession(s *ctxpkg.Session) *AgentEngine {
 	e.session = s
-	_ = observability.NewCostTracker(e.provider, e.settings.Model, s)
+	e.provider = observability.NewCostTracker(e.provider, e.settings.Model, s, e.settings.ModelPricing)
 	return e
 }
 
