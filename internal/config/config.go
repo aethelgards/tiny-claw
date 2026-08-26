@@ -27,7 +27,34 @@ type Settings struct {
 	LarkChannelSize int    `json:"larkChannelSize"` // 消息队列容量，默认 64
 	ApprovalTimeout string `json:"approvalTimeout"` // 审批超时（Go duration 字符串），默认 "5m"，<=0 视为默认
 
+	// Memory 记忆系统配置
+	Memory *MemoryConfig `json:"memory"`
+
+	// ModelPricing 模型费用配置（单位：每百万 tokens）
+	ModelPricing map[string]ModelPricing `json:"modelPricing,omitempty"`
+
 	Log *LogConfig `json:"log"`
+}
+
+type ModelPricing struct {
+	Input  float64 `json:"input"`
+	Output float64 `json:"output"`
+}
+
+type MemoryConfig struct {
+	MaxInjectTokens  int             `json:"maxInjectTokens"`  // 注入 token 预算，默认 400
+	ExtractTimeout   string          `json:"extractTimeout"`   // 自动提取 LLM 超时，默认 "10s"
+	CompactThreshold float64         `json:"compactThreshold"` // Compact 淘汰分数阈值，默认 1.0
+	DecayLambda      float64         `json:"decayLambda"`      // 衰减系数，默认 0.05
+	Embedding        *EmbeddingConfig `json:"embedding,omitempty"`
+}
+
+type EmbeddingConfig struct {
+	Model    string  `json:"model,omitempty"`
+	BaseURL  string  `json:"baseURL,omitempty"`
+	APIKey   string  `json:"apiKey,omitempty"`
+	Timeout  string  `json:"timeout,omitempty"`
+	MinScore float64 `json:"minScore,omitempty"`
 }
 
 type LogConfig struct {
@@ -46,6 +73,12 @@ func defaultSettings() Settings {
 		WorkDir:         ".",
 		LarkChannelSize: 64,
 		ApprovalTimeout: "5m",
+		Memory: &MemoryConfig{
+			MaxInjectTokens:  400,
+			ExtractTimeout:   "10s",
+			CompactThreshold: 1.0,
+			DecayLambda:      0.05,
+		},
 		//Log: &LogConfig{
 		//	Level:     0,
 		//	Format:    "text",
@@ -124,6 +157,14 @@ func applyLayer(s *Settings, data []byte) error {
 	}
 	if v, ok := layer["planMode"]; ok {
 		if err := json.Unmarshal(v, &s.PlanMode); err != nil {
+			return err
+		}
+	}
+	if v, ok := layer["modelPricing"]; ok {
+		if s.ModelPricing == nil {
+			s.ModelPricing = make(map[string]ModelPricing)
+		}
+		if err := json.Unmarshal(v, &s.ModelPricing); err != nil {
 			return err
 		}
 	}

@@ -56,8 +56,8 @@ func runServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	port := fs.Int("port", 8080, "HTTP 服务监听端口")
 	portShort := fs.Int("p", 8080, "HTTP 服务监听端口 (简写)")
-	dataDir := fs.String("data-dir", ".claw/traces", "trace 数据存储目录")
-	dataDirShort := fs.String("d", ".claw/traces", "trace 数据存储目录 (简写)")
+	dataDir := fs.String("data-dir", ".claw", "trace 数据存储目录")
+	dataDirShort := fs.String("d", ".claw", "trace 数据存储目录 (简写)")
 	if err := fs.Parse(args); err != nil {
 		os.Exit(1)
 	}
@@ -140,9 +140,22 @@ func runAgent(args []string) {
 
 	// 记忆系统接线
 	home, _ := os.UserHomeDir()
+	var storeOpts []memory.StoreOption
+	if settings.Memory != nil && settings.Memory.Embedding != nil && settings.Memory.Embedding.Model != "" {
+		emb, err := provider.NewOpenAIEmbedder(settings.Memory.Embedding, settings.APIKey, settings.BaseURL)
+		if err != nil {
+			slog.Warn("embedding 初始化失败，将使用纯关键词检索", "err", err)
+		} else {
+			storeOpts = append(storeOpts, memory.WithEmbedder(emb))
+			if settings.Memory.Embedding.MinScore > 0 {
+				storeOpts = append(storeOpts, memory.WithMinScore(settings.Memory.Embedding.MinScore))
+			}
+		}
+	}
 	memStore, err := memory.NewMemoryStore(
-		filepath.Join(home, ".claw", "memory"),             // 全局
-		filepath.Join(settings.WorkDir, ".claw", "memory"), // 项目
+		filepath.Join(home, ".claw", "memory"),
+		filepath.Join(settings.WorkDir, ".claw", "memory"),
+		storeOpts...,
 	)
 	if err != nil {
 		slog.Error("记忆存储初始化失败", "err", err)

@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/aethelgards/tiny-claw/internal/helper"
+	"github.com/aethelgards/tiny-claw/internal/memory"
 	"github.com/aethelgards/tiny-claw/internal/schema"
 )
 
@@ -22,7 +23,16 @@ const (
 	DefaultCompressRatio = 80
 	// summaryPrefix 摘要消息的内容前缀，用于标识与日志。
 	summaryPrefix = "【历史会话摘要】\n"
+	// contextSessionsDir 是 context session（JSONL 对话历史）存放的子目录名，
+	// 与 observability.Storage 使用的 "sessions" 目录分离，避免双写冲突。
+	contextSessionsDir = "conversations"
 )
+
+// SessionFilePath 返回 context session 的磁盘文件路径。
+// 统一由本函数构造路径，避免各处硬编码导致路径不一致。
+func SessionFilePath(workDir, sessionID string) string {
+	return filepath.Join(workDir, ".claw", contextSessionsDir, sessionID+".json")
+}
 
 // Summarizer 把被丢弃的旧消息（连同已有摘要）压缩成一条新摘要。
 // 返回错误时调用方回退为纯截断。
@@ -49,6 +59,8 @@ type Session struct {
 	windowSet     bool // 是否显式设置过窗口（WithContextWindow 优先于 WithModel）
 
 	summarizer Summarizer // 摘要生成函数，nil 时压缩退化为纯截断
+
+	memoryExtractor *memory.SessionHook // 记忆提取钩子，压缩时自动提取
 
 	TotalCompletionTokens int64
 	TotalPromptTokens     int64
@@ -84,7 +96,7 @@ func (s *Session) RecordUsage(prompt int64, completion int64, cost float64) {
 // LoadSession 从磁盘加载既有会话；文件不存在时返回空会话。
 func LoadSession(sessionID, workDir string, opts ...Option) (*Session, error) {
 	s := NewSession(sessionID, workDir, opts...)
-	data, err := os.ReadFile(filepath.Join(workDir, ".claw", "sessions", sessionID+".json"))
+	data, err := os.ReadFile(SessionFilePath(workDir, sessionID))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return s, nil
@@ -179,6 +191,11 @@ func WithSummarizer(fn Summarizer) Option {
 	return func(s *Session) { s.summarizer = fn }
 }
 
+// WithMemoryExtractor 注入记忆提取钩子；压缩时自动提取记忆。
+func WithMemoryExtractor(h *memory.SessionHook) Option {
+	return func(s *Session) { s.memoryExtractor = h }
+}
+
 // Append 追加消息并落盘；累计估算 token 超过阈值时触发窗口压缩。
 // system 提示词不属于会话历史（由使用方单独组装），误入时丢弃并告警。
 func (s *Session) Append(ctx context.Context, msgs ...schema.Message) {
@@ -229,7 +246,7 @@ func (s *Session) GetWorkingMemory(ctx context.Context) []schema.Message {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
 
-	out := cloneMsgs(s.history)
+	out := sanitizeToolMessages(s.history)
 	if s.summary == "" {
 		return out
 	}
@@ -242,6 +259,36 @@ func (s *Session) GetWorkingMemory(ctx context.Context) []schema.Message {
 		return out
 	}
 	return append([]schema.Message{summaryMsg}, out...)
+}
+
+// sanitizeToolMessages ensures every tool result message (RoleUser with ToolCallID)
+// is preceded by an assistant message with non-empty ToolCalls.
+// This prevents DeepSeek API errors: "Messages with role 'tool' must be a response
+// to a preceding message with 'tool_calls'".
+func sanitizeToolMessages(msgs []schema.Message) []schema.Message {
+	if len(msgs) == 0 {
+		return msgs
+	}
+	out := make([]schema.Message, 0, len(msgs))
+	lastAssistantHadToolCalls := false
+	for i, msg := range msgs {
+		if msg.Role == schema.RoleAssistant {
+			lastAssistantHadToolCalls = len(msg.ToolCalls) > 0
+			out = append(out, msg)
+		} else if msg.ToolCallID != "" {
+			if lastAssistantHadToolCalls {
+				out = append(out, msg)
+			} else {
+				slog.Warn("sanitizeToolMessages: dropping orphaned tool result",
+					slog.String("toolCallID", msg.ToolCallID),
+					slog.Int("index", i))
+			}
+		} else {
+			lastAssistantHadToolCalls = false
+			out = append(out, msg)
+		}
+	}
+	return out
 }
 
 // totalTokens 估算整个历史的 token 数。
@@ -289,7 +336,6 @@ func estTokens(msg schema.Message) int {
 // 触发条件由调用方保证（totalTokens > threshold）。
 func (s *Session) compress(ctx context.Context) {
 	s.Mu.Lock()
-	defer s.Mu.Unlock()
 
 	// 摘要预留 threshold/8，其余留给最近原始消息
 	budget := s.threshold() - s.threshold()/8
@@ -307,10 +353,12 @@ func (s *Session) compress(ctx context.Context) {
 
 	// 整个历史都不超预算：无需压缩
 	if cutoff == 0 {
+		s.Mu.Unlock()
 		return
 	}
 	// 单个回合本身就超预算（连最后一条消息都放不进预算）：接受超限，避免死循环
 	if cutoff == len(s.history) {
+		s.Mu.Unlock()
 		slog.WarnContext(ctx, "session compress skipped: single turn exceeds budget",
 			slog.String("sessionID", s.ID))
 		return
@@ -322,9 +370,17 @@ func (s *Session) compress(ctx context.Context) {
 		cutoff++
 	}
 	if cutoff >= len(s.history) {
+		s.Mu.Unlock()
 		slog.WarnContext(ctx, "session compress skipped: boundary fix would drop current turn",
 			slog.String("sessionID", s.ID))
 		return
+	}
+
+	// 【新增】副本先行：克隆被丢弃的消息副本，供异步记忆提取使用
+	// clone 与 history 脱钩，后续裁剪不影响提取器读到的数据
+	var droppedCopy []schema.Message
+	if s.memoryExtractor != nil {
+		droppedCopy = cloneMsgs(s.history[:cutoff])
 	}
 
 	dropped := s.history[:cutoff]
@@ -333,11 +389,12 @@ func (s *Session) compress(ctx context.Context) {
 	if s.summarizer != nil {
 		newSummary, err := s.summarizer(ctx, s.summary, dropped)
 		if err != nil {
-			slog.WarnContext(ctx, "session summarizer failed, fallback to truncation",
+			slog.WarnContext(ctx, "session summarizer failed, keep old summary",
 				slog.String("err", err.Error()))
-			newSummary = ""
+			// 【R7】失败时保留旧摘要，不再清空
+		} else {
+			s.summary = newSummary
 		}
-		s.summary = newSummary
 	} else {
 		s.summary = ""
 	}
@@ -345,11 +402,21 @@ func (s *Session) compress(ctx context.Context) {
 	if err := s.RewriteFile(); err != nil {
 		slog.WarnContext(ctx, "session rewrite failed", slog.String("err", err.Error()))
 	}
+	s.Mu.Unlock()
+
+	// 【新增】锁外异步提取：fire-and-forget，自带超时，失败仅 warn
+	if len(droppedCopy) > 0 {
+		go s.memoryExtractor.Extract(droppedCopy)
+	}
 }
 
 // saveToDisk 以 JSONL 追加方式增量落盘。
 func (s *Session) saveToDisk(ctx context.Context, msgs []schema.Message) {
-	sessionFile := filepath.Join(s.WorkDir, ".claw", "sessions", s.ID+".json")
+	sessionFile := SessionFilePath(s.WorkDir, s.ID)
+	if err := os.MkdirAll(filepath.Dir(sessionFile), 0o755); err != nil {
+		slog.WarnContext(ctx, "create session dir failed", slog.String("err", err.Error()))
+		return
+	}
 	for _, msg := range msgs {
 		line := helper.Any2Json(msg)
 		if err := helper.AppendLine(sessionFile, line); err != nil {
@@ -360,7 +427,7 @@ func (s *Session) saveToDisk(ctx context.Context, msgs []schema.Message) {
 
 // RewriteFile 原子重写整个会话文件：摘要记录 + 原始消息。
 func (s *Session) RewriteFile() error {
-	file := filepath.Join(s.WorkDir, ".claw", "sessions", s.ID+".json")
+	file := SessionFilePath(s.WorkDir, s.ID)
 	var sb strings.Builder
 	if s.summary != "" {
 		sb.WriteString(helper.Any2Json(map[string]string{"summary": s.summary}))
@@ -371,6 +438,9 @@ func (s *Session) RewriteFile() error {
 		sb.WriteByte('\n')
 	}
 	tmp := file + ".tmp"
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		return err
+	}
 	if err := os.WriteFile(tmp, []byte(sb.String()), 0o644); err != nil {
 		return err
 	}

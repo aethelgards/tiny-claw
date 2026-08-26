@@ -1,17 +1,20 @@
 package context
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/aethelgards/tiny-claw/internal/memory"
 	"github.com/aethelgards/tiny-claw/internal/schema"
 )
 
 type PromptComposer struct {
-	workDir  string
-	planMode bool
+	workDir       string
+	planMode      bool
+	memoryInjector *memory.MemoryInjector
 }
 
 func NewPromptComposer(workDir string, planMode bool) *PromptComposer {
@@ -19,6 +22,10 @@ func NewPromptComposer(workDir string, planMode bool) *PromptComposer {
 		workDir:  workDir,
 		planMode: planMode,
 	}
+}
+
+func (c *PromptComposer) WithMemoryInjector(injector *memory.MemoryInjector) {
+	c.memoryInjector = injector
 }
 
 // skillStrategy 是固定的专业技能使用策略文案（常驻，~100 tokens）。
@@ -83,6 +90,22 @@ func (c *PromptComposer) Build() schema.Message {
 	}
 
 	promptBuilder.WriteString(skillStrategy)
+
+	// 注入长期记忆块
+	if c.memoryInjector != nil {
+		if memBlock := c.memoryInjector.Recent(context.Background()); len(memBlock) > 0 {
+			promptBuilder.WriteString("\n# 长期记忆（来自记忆系统）\n")
+			promptBuilder.WriteString("以下是从历史会话中沉淀的经验，帮助你避免重复犯错、贴合用户习惯：\n")
+			for _, m := range memBlock {
+				promptBuilder.WriteString("- [")
+				promptBuilder.WriteString(string(m.Type))
+				promptBuilder.WriteString("] ")
+				promptBuilder.WriteString(m.Content)
+				promptBuilder.WriteString("\n")
+			}
+			promptBuilder.WriteString("\n以上记忆可能不完全适用当前任务，以实际代码为准。\n")
+		}
+	}
 
 	slog.Debug("claw system prompt", slog.String("path", projectAgentPath), slog.String("prompt", promptBuilder.String()))
 
