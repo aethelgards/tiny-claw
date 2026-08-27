@@ -2,7 +2,6 @@ package engine
 
 import (
 	"log/slog"
-	"os"
 	"sort"
 	"sync"
 
@@ -59,11 +58,11 @@ func (sm *SessionMessage) Delete(sessionID string) {
 	}
 	session.Mu.Lock()
 	defer session.Mu.Unlock()
-	path := context.SessionFilePath(session.WorkDir, sessionID)
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		slog.Warn("session delete: remove file failed",
-			slog.String("sessionID", sessionID), slog.String("err", err.Error()))
-	}
+	//path := context.SessionFilePath(session.WorkDir, sessionID)
+	//if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+	//	slog.Warn("session delete: remove file failed",
+	//		slog.String("sessionID", sessionID), slog.String("err", err.Error()))
+	//}
 }
 
 // List 返回全部活跃会话 ID（排序，保证确定性输出）。

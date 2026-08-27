@@ -74,7 +74,7 @@ func (p *EngineProcessor) WithStorage(s *observability.Storage) *EngineProcessor
 }
 
 // Process 为该消息创建独立 engine + reporter，绑定按 ChatID 复用/新建的会话后执行。
-func (p *EngineProcessor) Process(ctx context.Context, msg IncomingMessage) error {
+func (p *EngineProcessor) Process(ctx context.Context, msg *IncomingMessage) error {
 	reporter := NewLarkReporter(p.bot, msg.ChatID, msg.TenantKey)
 	ctx = approval.WithApprovalContext(ctx, reporter, msg.OpenID)
 	agent := engine.NewAgentEngine(p.provider, p.registry, p.settings, reporter, p.promptComposer, ctxpkg.NewRecoveryManager(), engine.NewReminderInjector(3))

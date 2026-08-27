@@ -46,20 +46,20 @@ func (d *Deduper) Seen(id string) bool {
 // MessageQueue 有界消息队列：入队永不阻塞，满则丢弃（背压策略）。
 // 同一 msg_id 只会被入队一次（去重）。
 type MessageQueue struct {
-	ch    chan IncomingMessage
+	ch    chan *IncomingMessage
 	dedup *Deduper
 }
 
 func NewMessageQueue(size int) *MessageQueue {
 	return &MessageQueue{
-		ch:    make(chan IncomingMessage, size),
+		ch:    make(chan *IncomingMessage, size),
 		dedup: NewDeduper(defaultDedupTTL),
 	}
 }
 
 // Enqueue 非阻塞入队。返回 false 表示消息被丢弃：
 // 可能是重复消息（msg_id 已处理过），也可能是队列已满。
-func (q *MessageQueue) Enqueue(msg IncomingMessage) bool {
+func (q *MessageQueue) Enqueue(msg *IncomingMessage) bool {
 	if q.dedup.Seen(msg.MessageID) {
 		return false
 	}
@@ -72,6 +72,6 @@ func (q *MessageQueue) Enqueue(msg IncomingMessage) bool {
 }
 
 // Messages 返回只读消费通道。
-func (q *MessageQueue) Messages() <-chan IncomingMessage {
+func (q *MessageQueue) Messages() <-chan *IncomingMessage {
 	return q.ch
 }

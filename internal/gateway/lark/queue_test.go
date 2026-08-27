@@ -7,7 +7,7 @@ import (
 
 func TestMessageQueueEnqueueDequeue(t *testing.T) {
 	q := NewMessageQueue(2)
-	msg := IncomingMessage{MessageID: "m1", ChatID: "c1", Text: "hi"}
+	msg := &IncomingMessage{MessageID: "m1", ChatID: "c1", Text: "hi"}
 
 	if !q.Enqueue(msg) {
 		t.Fatal("入队应成功")
@@ -24,12 +24,12 @@ func TestMessageQueueEnqueueDequeue(t *testing.T) {
 
 func TestMessageQueueFullDrops(t *testing.T) {
 	q := NewMessageQueue(1)
-	if !q.Enqueue(IncomingMessage{MessageID: "m1"}) {
+	if !q.Enqueue(&IncomingMessage{MessageID: "m1"}) {
 		t.Fatal("第一条应入队成功")
 	}
 	// 队列已满：第二条应立即返回 false，且不阻塞
 	start := time.Now()
-	if q.Enqueue(IncomingMessage{MessageID: "m2"}) {
+	if q.Enqueue(&IncomingMessage{MessageID: "m2"}) {
 		t.Fatal("满队列时入队应返回 false")
 	}
 	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
@@ -39,24 +39,24 @@ func TestMessageQueueFullDrops(t *testing.T) {
 
 func TestMessageQueueDedup(t *testing.T) {
 	q := NewMessageQueue(4)
-	if !q.Enqueue(IncomingMessage{MessageID: "m1"}) {
+	if !q.Enqueue(&IncomingMessage{MessageID: "m1"}) {
 		t.Fatal("第一条应入队成功")
 	}
-	if q.Enqueue(IncomingMessage{MessageID: "m1"}) {
+	if q.Enqueue(&IncomingMessage{MessageID: "m1"}) {
 		t.Fatal("重复 msg_id 应被去重丢弃")
 	}
 	// 不同 msg_id 不受影响
-	if !q.Enqueue(IncomingMessage{MessageID: "m2"}) {
+	if !q.Enqueue(&IncomingMessage{MessageID: "m2"}) {
 		t.Fatal("不同 msg_id 应可入队")
 	}
 }
 
 func TestMessageQueueEmptyIDNeverDeduped(t *testing.T) {
 	q := NewMessageQueue(2)
-	if !q.Enqueue(IncomingMessage{MessageID: ""}) {
+	if !q.Enqueue(&IncomingMessage{MessageID: ""}) {
 		t.Fatal("空 msg_id 不应被去重拦截")
 	}
-	if !q.Enqueue(IncomingMessage{MessageID: ""}) {
+	if !q.Enqueue(&IncomingMessage{MessageID: ""}) {
 		t.Fatal("空 msg_id 应始终可入队（不去重）")
 	}
 }

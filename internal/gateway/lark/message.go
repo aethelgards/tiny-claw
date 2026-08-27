@@ -23,28 +23,28 @@ type textContent struct {
 
 // ParseMessageEvent 从 Lark 事件中解析 IncomingMessage。
 // 返回 false 表示该事件不应进入管道（机器人自身消息 / 非 text 消息 / 字段缺失）。
-func ParseMessageEvent(event *larkim.P2MessageReceiveV1) (IncomingMessage, bool) {
+func ParseMessageEvent(event *larkim.P2MessageReceiveV1) (*IncomingMessage, bool) {
 	if event == nil || event.Event == nil || event.Event.Message == nil || event.Event.Sender == nil {
-		return IncomingMessage{}, false
+		return nil, false
 	}
 
 	// 过滤机器人自身消息，防止回环
 	if senderType := event.Event.Sender.SenderType; senderType != nil && *senderType == "app" {
-		return IncomingMessage{}, false
+		return nil, false
 	}
 
 	msg := event.Event.Message
 	// v1 仅支持文本消息
 	if msg.MessageType == nil || *msg.MessageType != "text" {
-		return IncomingMessage{}, false
+		return nil, false
 	}
 	if msg.MessageId == nil || msg.ChatId == nil || msg.Content == nil {
-		return IncomingMessage{}, false
+		return nil, false
 	}
 
 	var tc textContent
 	if err := json.Unmarshal([]byte(*msg.Content), &tc); err != nil {
-		return IncomingMessage{}, false
+		return nil, false
 	}
 
 	in := IncomingMessage{
@@ -56,5 +56,5 @@ func ParseMessageEvent(event *larkim.P2MessageReceiveV1) (IncomingMessage, bool)
 	if senderID := event.Event.Sender.SenderId; senderID != nil && senderID.OpenId != nil {
 		in.OpenID = *senderID.OpenId
 	}
-	return in, true
+	return &in, true
 }

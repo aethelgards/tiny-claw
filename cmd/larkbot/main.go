@@ -19,6 +19,7 @@ import (
 	"github.com/aethelgards/tiny-claw/internal/provider"
 	"github.com/aethelgards/tiny-claw/internal/tools"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
+	larkapplication "github.com/larksuite/oapi-sdk-go/v3/service/application/v6"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
@@ -123,9 +124,18 @@ func main() {
 	storage := observability.NewStorage(filepath.Join(settings.WorkDir, ".claw"))
 	engineProcessor.WithStorage(storage)
 
+	oidMapping := lark.NewOpenIDToChatIDMappingWithPath(
+		filepath.Join(settings.WorkDir, ".claw", "lark_openid_chatid.json"),
+	)
+	if err := oidMapping.Load(); err != nil {
+		slog.Warn("openid chatid mapping load failed", slog.String("err", err.Error()))
+	}
+	menuProcessor := lark.NewMenuEngineProcessor(bot, oidMapping)
+	menuWorker := lark.NewMenuWorker(settings.LarkChannelSize, menuProcessor)
+
 	worker := lark.NewWorker(queue,
 		engineProcessor,
-		func(ctx context.Context, msg lark.IncomingMessage, err error) {
+		func(ctx context.Context, msg *lark.IncomingMessage, err error) {
 			reply := "处理消息失败：" + err.Error()
 			if len(reply) > 400 {
 				reply = reply[:400] + "…"
@@ -148,12 +158,26 @@ func main() {
 					slog.WarnContext(ctx, "parse lark event failed", slog.String("event", helper.Any2Json(event)))
 					return nil
 				}
+				oidMapping.Set(msg.OpenID, msg.ChatID)
 				if !queue.Enqueue(msg) {
 					slog.WarnContext(ctx, "消息入队失败（重复或队列已满），丢弃",
 						slog.String("msgID", msg.MessageID),
 						slog.String("chatID", msg.ChatID))
 				} else {
 					slog.InfoContext(ctx, "message enqueue success", slog.String("msgID", msg.MessageID))
+				}
+				return nil
+			}).OnP2BotMenuV6(func(ctx context.Context, event *larkapplication.P2BotMenuV6) error {
+				slog.InfoContext(ctx, "recv lark menu event", slog.String("event", helper.Any2Json(event)))
+				evt, ok := lark.ParseMenuEvent(event)
+				if !ok {
+					slog.WarnContext(ctx, "parse lark menu event failed", slog.String("event", helper.Any2Json(event)))
+					return nil
+				}
+				if !menuWorker.Enqueue(evt) {
+					slog.WarnContext(ctx, "menu event enqueue failed (queue full)",
+						slog.String("menuKey", evt.MenuKey),
+						slog.String("openID", evt.OpenID))
 				}
 				return nil
 			}).OnP2CardActionTrigger(lark.NewApprovalCardHandler(approvalMgr))
@@ -164,6 +188,7 @@ func main() {
 	}()
 
 	go worker.Run(ctx)
+	go menuWorker.Run(ctx)
 	slog.Info("lark bot 已启动，等待消息…")
 
 	<-ctx.Done()

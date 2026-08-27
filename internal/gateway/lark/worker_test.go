@@ -18,7 +18,7 @@ type fakeProcessor struct {
 	calls    atomic.Int32
 }
 
-func (f *fakeProcessor) Process(ctx context.Context, msg IncomingMessage) error {
+func (f *fakeProcessor) Process(ctx context.Context, msg *IncomingMessage) error {
 	idx := f.calls.Add(1)
 	if f.panicIdx == idx {
 		panic("boom")
@@ -67,7 +67,7 @@ func TestWorkerSerialOrder(t *testing.T) {
 	}()
 
 	for _, id := range []string{"m1", "m2", "m3"} {
-		if !q.Enqueue(IncomingMessage{MessageID: id}) {
+		if !q.Enqueue(&IncomingMessage{MessageID: id}) {
 			t.Fatalf("入队 %s 失败", id)
 		}
 	}
@@ -91,7 +91,7 @@ func TestWorkerPanicRecovery(t *testing.T) {
 	q := NewMessageQueue(4)
 	fp := &fakeProcessor{panicIdx: 1}
 	notified := make(chan struct{}, 4)
-	w := NewWorker(q, fp, func(ctx context.Context, msg IncomingMessage, err error) {
+	w := NewWorker(q, fp, func(ctx context.Context, msg *IncomingMessage, err error) {
 		notified <- struct{}{}
 	})
 
@@ -99,10 +99,10 @@ func TestWorkerPanicRecovery(t *testing.T) {
 	defer cancel()
 	go w.Run(ctx)
 
-	if !q.Enqueue(IncomingMessage{MessageID: "m1"}) {
+	if !q.Enqueue(&IncomingMessage{MessageID: "m1"}) {
 		t.Fatal("入队 m1 失败")
 	}
-	if !q.Enqueue(IncomingMessage{MessageID: "m2"}) {
+	if !q.Enqueue(&IncomingMessage{MessageID: "m2"}) {
 		t.Fatal("入队 m2 失败")
 	}
 
@@ -121,7 +121,7 @@ func TestWorkerErrorNotifies(t *testing.T) {
 	q := NewMessageQueue(2)
 	fp := &fakeProcessor{failIdx: 1}
 	var notifiedErr atomic.Value
-	w := NewWorker(q, fp, func(ctx context.Context, msg IncomingMessage, err error) {
+	w := NewWorker(q, fp, func(ctx context.Context, msg *IncomingMessage, err error) {
 		notifiedErr.Store(err.Error())
 	})
 
@@ -129,7 +129,7 @@ func TestWorkerErrorNotifies(t *testing.T) {
 	defer cancel()
 	go w.Run(ctx)
 
-	if !q.Enqueue(IncomingMessage{MessageID: "m1"}) {
+	if !q.Enqueue(&IncomingMessage{MessageID: "m1"}) {
 		t.Fatal("入队失败")
 	}
 

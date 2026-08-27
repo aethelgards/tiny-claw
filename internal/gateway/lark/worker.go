@@ -11,11 +11,11 @@ import (
 
 // Processor 消费端处理单元，由装配方注入（测试时可注入 fake）。
 type Processor interface {
-	Process(ctx context.Context, msg IncomingMessage) error
+	Process(ctx context.Context, msg *IncomingMessage) error
 }
 
 // onError 可选回调：处理失败/panic 时由装配方注入，用于回复错误提示。
-type onError func(ctx context.Context, msg IncomingMessage, err error)
+type onError func(ctx context.Context, msg *IncomingMessage, err error)
 
 // Worker 单 goroutine 串行消费队列消息。
 // 同一时间只处理一条消息，天然保证处理顺序；
@@ -52,7 +52,7 @@ func (w *Worker) Run(ctx context.Context) {
 }
 
 // safeProcess 包裹 processor.Process，捕获 panic 保证 worker 不因单个消息崩溃。
-func (w *Worker) safeProcess(ctx context.Context, msg IncomingMessage) {
+func (w *Worker) safeProcess(ctx context.Context, msg *IncomingMessage) {
 	slog.InfoContext(ctx, "worker processing message", slog.String("msg", helper.Any2Json(msg)))
 	defer func() {
 		if r := recover(); r != nil {
@@ -73,7 +73,7 @@ func (w *Worker) safeProcess(ctx context.Context, msg IncomingMessage) {
 	}
 }
 
-func (w *Worker) notifyError(ctx context.Context, msg IncomingMessage, err error) {
+func (w *Worker) notifyError(ctx context.Context, msg *IncomingMessage, err error) {
 	if w.onError != nil {
 		w.onError(ctx, msg, err)
 	}
